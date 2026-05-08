@@ -7,6 +7,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import * as Auth from './auth.js';
 import * as Sfx from './audio.js';
 import { net } from './net.js';
+import { isTouch, touchState, setupTouchControls } from './touch.js';
 
 // ─── Scene, camera, renderer ──────────────────────────────────────────────
 const scene = new THREE.Scene();
@@ -1907,6 +1908,7 @@ function animate() {
   if (game.alive) updateBots(dt);
   tickDyingBots(dt);
 
+  tickTouchInput();
   tickWeapons(dt);
   tickFlameParticles(dt);
   tickGrenades(dt);
@@ -2413,6 +2415,91 @@ function tickNetSync(dt) {
 
 console.log('FPS Stage 5 ready — multiplayer enabled.');
 
+// ─── Touch / mobile controls ─────────────────────────────────────────────
+// On phones and tablets the desktop pointer-lock + WASD scheme is unusable.
+// We expose an on-screen joystick for movement, a drag-to-look area, and
+// fire / jump / reload / grenade buttons. The existing keyboard/mouse state
+// objects (`keys`, `mouseDown`, camera rotation) are driven by this input —
+// the rest of the game doesn't need to know we're on mobile.
+setupTouchControls({
+  onJump:    () => { if (controls.isLocked && onGround) keys.space = true; setTimeout(() => keys.space = false, 100); },
+  onReload:  () => { if (controls.isLocked) reload(); },
+  onGrenade: () => { if (controls.isLocked) tryThrowGrenade(); },
+});
+
+// Helper used everywhere we'd normally call controls.lock() / unlock().
+// On mobile pointer-lock isn't available, so we just flip the `isLocked`
+// flag manually — the rest of the game already gates on it.
+function setLockState(locked) {
+  if (isTouch) {
+    controls.isLocked = locked;
+    if (locked) overlay.classList.add('hidden');
+  } else {
+    if (locked) controls.lock();
+    else controls.unlock();
+  }
+}
+
+// Patch over the original startGame's call to controls.lock() so it works
+// on mobile too. We do this by overriding lock/unlock on the controls object
+// when running on a touch device.
+if (isTouch) {
+  controls.lock   = function () { setLockState(true); };
+  controls.unlock = function () {
+    controls.isLocked = false;
+    overlay.classList.remove('hidden');
+  };
+}
+
+// Per-frame input bridge: feed touch state into the existing keys / mouseDown
+// vars + rotate camera manually (PointerLockControls is a no-op on touch).
+// `var` here so the variable is hoisted — `tickTouchInput` is invoked from
+// the animate loop which starts before this block runs.
+var _prevTouchFiring = false;
+
+function tickTouchInput() {
+  // Driven by the `is-touch` body class — set by setupTouchControls() on real
+  // touch devices, but can also be toggled manually (e.g. by power-users
+  // testing on a hybrid laptop).
+  if (!document.body.classList.contains('is-touch')) return;
+  if (!controls.isLocked || !game.alive) {
+    keys.w = keys.a = keys.s = keys.d = keys.shift = false;
+    mouseDown = false;
+    _prevTouchFiring = false;
+    return;
+  }
+
+  // Joystick → WASD. Y is screen-down, so up on the stick (negative Y) means forward.
+  const fwd = -touchState.moveY;
+  const right = touchState.moveX;
+  keys.w = fwd >  0.2;
+  keys.s = fwd < -0.2;
+  keys.a = right < -0.2;
+  keys.d = right >  0.2;
+  const stickMag = Math.hypot(touchState.moveX, touchState.moveY);
+  keys.shift = touchState.sprinting || stickMag > 0.85;
+
+  // Look — manually rotate the camera. YXZ Euler keeps pitch/yaw decoupled.
+  if (touchState.lookDX !== 0 || touchState.lookDY !== 0) {
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    euler.setFromQuaternion(camera.quaternion);
+    euler.y -= touchState.lookDX * 0.005;
+    euler.x -= touchState.lookDY * 0.005;
+    euler.x = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, euler.x));
+    camera.quaternion.setFromEuler(euler);
+    touchState.lookDX = 0;
+    touchState.lookDY = 0;
+  }
+
+  // Rising edge of the fire button shoots immediately (covers semi + melee).
+  // Auto weapons keep firing from tickWeapons while mouseDown is true.
+  if (touchState.firing && !_prevTouchFiring) tryFire();
+  mouseDown = touchState.firing;
+  _prevTouchFiring = touchState.firing;
+}
+
+if (isTouch) console.log('Touch device detected — on-screen controls enabled.');
+
 // Dev hook — open DevTools and play with `__fps` (e.g. `__fps.bots[0].hp = 1`)
 window.__fps = {
   THREE, scene, camera, bots, game, stamina, controls,
@@ -2430,4 +2517,5 @@ window.__fps = {
   flameParticles, explosions, tickFlameParticles,
   tickContinuousFire, damageBotsInCone,
   net, remotePlayers, ensureRemoteAvatar, removeRemoteAvatar,
+  keys, isTouch, touchState, tickTouchInput,
 };

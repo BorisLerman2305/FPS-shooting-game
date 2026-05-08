@@ -2,7 +2,10 @@
 <html lang="he">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#16213e" />
   <title>FPS Game — Stage 1</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -112,11 +115,14 @@
     /* Start screen overlay (asks to click to enter) */
     #overlay {
       position: fixed; inset: 0;
-      display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.85); color: #fff; z-index: 100;
-      flex-direction: column; gap: 16px;
-      text-align: center; padding: 20px;
+      display: flex; align-items: flex-start; justify-content: center;
+      background: rgba(0,0,0,0.88); color: #fff; z-index: 100;
+      flex-direction: column; gap: 14px;
+      text-align: center; padding: 12px;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
     }
+    #overlay > * { align-self: center; }
+    #overlay > .user-bar + * { margin-top: 50px; } /* leave room for the absolute-positioned user bar */
     #overlay h1 { font-size: 48px; }
     #overlay .controls { font-size: 18px; line-height: 1.8; opacity: 0.9; }
     #overlay .pick { font-size: 20px; color: #ffd54a; margin-top: 10px; }
@@ -222,11 +228,13 @@
     /* Auth overlay (login / register / guest) — shown before #overlay */
     #authOverlay {
       position: fixed; inset: 0;
-      display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: flex-start; justify-content: center;
       background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff;
       z-index: 300; flex-direction: column; gap: 14px; text-align: center;
-      padding: 20px;
+      padding: 20px; padding-top: 6vh;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
     }
+    #authOverlay > * { width: 100%; max-width: 360px; align-self: center; }
     #authOverlay h1 { font-size: 44px; margin-bottom: 4px; }
     #authOverlay .subtitle { opacity: 0.7; font-size: 16px; margin-bottom: 18px; }
     #authOverlay .auth-form { display: flex; flex-direction: column; gap: 10px; align-items: stretch; min-width: 280px; }
@@ -287,12 +295,13 @@
       box-shadow: 0 0 12px rgba(255,213,74,0.5);
     }
 
-    /* Game-over overlay */
+    /* Game-over / victory overlays */
     #gameOver, #victory {
       position: fixed; inset: 0;
       display: flex; align-items: center; justify-content: center;
       color: #fff; z-index: 200;
       flex-direction: column; gap: 16px; text-align: center;
+      padding: 20px; overflow-y: auto;
     }
     #gameOver { background: rgba(40,0,0,0.85); }
     #victory  { background: rgba(0,40,10,0.88); }
@@ -305,6 +314,95 @@
       cursor: pointer; margin-top: 12px;
     }
     #gameOver button:hover, #victory button:hover { background: #fff; color: #000; }
+
+    /* ─── Mobile / narrow-viewport tuning ─────────────────────────────── */
+    @media (max-width: 720px), (max-height: 600px) {
+      #authOverlay h1 { font-size: 32px; }
+      #authOverlay .subtitle { font-size: 13px; margin-bottom: 10px; }
+      #overlay h1 { font-size: 28px; }
+      #overlay .controls { font-size: 13px; line-height: 1.5; }
+      #overlay button { font-size: 14px; padding: 10px 14px; min-width: 90px; }
+      #overlay .user-bar { font-size: 13px; padding: 6px 10px; }
+      #overlay .user-stats { font-size: 12px; gap: 10px; padding: 6px 10px; flex-wrap: wrap; }
+      #overlay .user-stats .num { font-size: 14px; }
+      #overlay .quota-row { font-size: 14px; }
+      #overlay .quota-row input { width: 70px; padding: 6px 8px; }
+      #overlay .loadout-picks { gap: 4px; }
+      #overlay .loadout-picks button { min-width: 64px; padding: 6px 4px; font-size: 11px; }
+      #overlay .mp-section { padding: 8px; }
+      #overlay .mp-tab { font-size: 12px; padding: 6px 8px; }
+      #overlay .mp-panel input { font-size: 14px; width: 100px; }
+      #overlay .mp-panel .room-code { font-size: 22px; padding: 4px 10px; }
+      #overlay .difficulty { gap: 6px; }
+      #overlay > .user-bar + * { margin-top: 56px; }
+      #hud { font-size: 14px; padding: 6px 10px; bottom: 14px; right: 10px; }
+      #hud .weapon { font-size: 17px; }
+      #health { padding: 6px 10px; bottom: 10px; left: 10px; font-size: 14px; }
+      #health .bar { width: 130px; height: 10px; }
+      #stamina { padding: 6px 10px; bottom: 70px; left: 10px; font-size: 13px; }
+      #stamina .bar { width: 130px; height: 9px; }
+      #score { padding: 6px 10px; top: 10px; right: 10px; font-size: 13px; }
+      #score .kills { font-size: 22px; }
+      #grenadeCounter { top: 70px; right: 10px; padding: 6px 10px; font-size: 14px; }
+      #grenadeCounter .num { font-size: 18px; }
+      #weaponRow { bottom: 90px; gap: 4px; }
+      #weaponRow .slot { min-width: 56px; padding: 5px 6px; }
+      #weaponRow .slot .icon { font-size: 18px; }
+      #weaponRow .slot .name { font-size: 10px; }
+      #weaponRow .slot .ammo-mini { font-size: 9px; }
+    }
+
+    /* ─── Touch controls ──────────────────────────────────────────────── */
+    /* Visible only when JS detects touch — we add `body.is-touch` then. */
+    #touchControls { display: none; }
+    body.is-touch #touchControls { display: block; }
+    body.is-touch #weaponRow { bottom: 130px; }
+    /* On touch, hide keyboard-only hints in the start overlay */
+    body.is-touch .controls { display: none; }
+    body.is-touch #overlay .pick { font-size: 16px; }
+
+    #touchControls .joystick {
+      position: fixed; left: 24px; bottom: 24px;
+      width: 130px; height: 130px; border-radius: 50%;
+      background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.25);
+      z-index: 60; touch-action: none;
+    }
+    #touchControls .joystick .knob {
+      position: absolute; top: 50%; left: 50%;
+      width: 56px; height: 56px; margin: -28px 0 0 -28px;
+      border-radius: 50%;
+      background: rgba(255, 213, 74, 0.9);
+      box-shadow: 0 0 16px rgba(255,213,74,0.4);
+      transition: transform 0.04s linear;
+    }
+
+    #touchControls .look-area {
+      position: fixed; top: 0; right: 0; width: 50%; height: 100%;
+      z-index: 55; touch-action: none;
+      /* Invisible — just an input target. Background only for debugging. */
+    }
+
+    #touchControls .action-btn {
+      position: fixed; z-index: 60; touch-action: none;
+      width: 72px; height: 72px; border-radius: 50%;
+      background: rgba(0,0,0,0.55); color: #fff;
+      border: 2px solid rgba(255,255,255,0.4);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 30px; user-select: none; -webkit-user-select: none;
+      transition: transform 0.06s, background 0.06s;
+    }
+    #touchControls .action-btn:active,
+    #touchControls .action-btn.pressed { background: rgba(255, 213, 74, 0.85); color: #000; transform: scale(0.92); }
+    #touchControls .fire { right: 28px; bottom: 28px; width: 100px; height: 100px; font-size: 38px; background: rgba(220, 60, 60, 0.7); }
+    #touchControls .fire:active,
+    #touchControls .fire.pressed { background: rgba(255, 130, 60, 0.95); }
+    #touchControls .jump    { right: 140px; bottom: 70px; }
+    #touchControls .reload  { right: 140px; bottom: 150px; font-size: 24px; }
+    #touchControls .grenade { right: 28px; bottom: 140px; font-size: 26px; }
+    #touchControls .sprint  { left: 170px; bottom: 70px; }
+
+    /* Hide redundant on-screen hint about ESC etc when on touch */
+    body.is-touch #overlay .pick.solo-hint { display: none; }
   </style>
 </head>
 <body>
@@ -451,6 +549,19 @@
   <div id="waitingForHost" class="hidden">
     ⏳ ממתין למארח להתחיל את המשחק...
     <div class="small">לחץ ESC כדי לחזור לתפריט</div>
+  </div>
+
+  <!-- Touch controls (only visible on touch devices, body.is-touch) -->
+  <div id="touchControls">
+    <div class="joystick" id="touchJoystick">
+      <div class="knob"></div>
+    </div>
+    <div class="look-area" id="touchLookArea"></div>
+    <div class="action-btn fire"    id="touchFire">🔥</div>
+    <div class="action-btn jump"    id="touchJump">🦘</div>
+    <div class="action-btn reload"  id="touchReload">🔄</div>
+    <div class="action-btn grenade" id="touchGrenade">💣</div>
+    <div class="action-btn sprint"  id="touchSprint">⚡</div>
   </div>
 
   <div id="gameOver" class="hidden">
