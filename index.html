@@ -28,6 +28,21 @@
     #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
     #crosshair::after  { left: 9px; top: 0; height: 20px; width: 2px; }
 
+    /* In-game HUD elements are only shown DURING gameplay (when body.in-game).
+       Otherwise (auth screen, start menu, victory/death/admin) they're hidden
+       so they don't bleed through the semi-transparent overlay backgrounds. */
+    body:not(.in-game) #hud,
+    body:not(.in-game) #health,
+    body:not(.in-game) #stamina,
+    body:not(.in-game) #score,
+    body:not(.in-game) #grenadeCounter,
+    body:not(.in-game) #weaponRow,
+    body:not(.in-game) #crosshair,
+    body:not(.in-game) #touchControls,
+    body:not(.in-game) #scope {
+      display: none !important;
+    }
+
     /* HUD: weapon + ammo (bottom right) */
     #hud {
       position: fixed; bottom: 20px; right: 20px;

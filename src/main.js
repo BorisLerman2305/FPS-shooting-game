@@ -93,6 +93,16 @@ Sfx.unlockOnUserGesture();
 const remotePlayers = new Map();
 let syncAccumulator = 0;
 
+// Cached overlay elements, looked up once. Used in animate() to keep the
+// `body.in-game` class in sync with whichever menu is currently visible.
+const _menuEls = {
+  start:    document.getElementById('overlay'),
+  auth:     document.getElementById('authOverlay'),
+  gameOver: document.getElementById('gameOver'),
+  victory:  document.getElementById('victory'),
+  admin:    document.getElementById('adminPanel'),
+};
+
 // ─── Procedural textures ──────────────────────────────────────────────────
 // Generated in canvas — no external assets needed.
 function makeTextureFromCanvas(canvas, repeat = 1) {
@@ -1931,6 +1941,18 @@ function animate() {
   tickSparks(dt);
   tickPickups(dt, clock.elapsedTime);
   tickNetSync(dt);
+
+  // Toggle the `in-game` body class so CSS can hide the gameplay HUD whenever
+  // any menu overlay is open. classList.toggle with an explicit boolean is
+  // idempotent — cheap to call every frame.
+  const isMenuOpen = (el) => el && !el.classList.contains('hidden');
+  const menuOpen =
+    isMenuOpen(_menuEls.start)    ||
+    isMenuOpen(_menuEls.auth)     ||
+    isMenuOpen(_menuEls.gameOver) ||
+    isMenuOpen(_menuEls.victory)  ||
+    isMenuOpen(_menuEls.admin);
+  document.body.classList.toggle('in-game', !menuOpen);
 
   composer.render();
 }
