@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FPS Game — Stage 1</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+    #app { width: 100%; height: 100%; }
+
+    /* Crosshair in the middle of the screen */
+    #crosshair {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px; height: 20px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute; background: #fff;
+      box-shadow: 0 0 2px #000;
+    }
+    #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+    #crosshair::after  { left: 9px; top: 0; height: 20px; width: 2px; }
+
+    /* HUD: weapon + ammo (bottom right) */
+    #hud {
+      position: fixed; bottom: 20px; right: 20px;
+      color: #fff; font-size: 18px; z-index: 10;
+      background: rgba(0,0,0,0.45); padding: 10px 16px; border-radius: 8px;
+      text-shadow: 0 0 4px #000;
+    }
+    #hud .weapon { font-weight: bold; font-size: 22px; }
+    #hud .ammo   { color: #ffd54a; }
+    #hud .reserve { color: #b3d3ff; font-size: 14px; opacity: 0.85; margin-inline-start: 8px; }
+    #hud .reserve.empty { color: #ff7777; opacity: 1; }
+
+    /* Grenade counter, top-right under #score */
+    #grenadeCounter {
+      position: fixed; top: 90px; right: 20px;
+      color: #fff; font-size: 16px; z-index: 10;
+      background: rgba(0,0,0,0.45); padding: 8px 14px; border-radius: 8px;
+      direction: rtl;
+    }
+    #grenadeCounter .num { color: #ffd54a; font-weight: bold; font-size: 22px; margin-inline-start: 6px; }
+
+    /* Weapon row (bottom center) — 5 slots, current is highlighted */
+    #weaponRow {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 8px; z-index: 10;
+    }
+    #weaponRow .slot {
+      display: flex; flex-direction: column; align-items: center;
+      min-width: 78px; padding: 8px 10px; border-radius: 8px;
+      background: rgba(0,0,0,0.5); border: 2px solid rgba(255,255,255,0.2);
+      color: #fff; transition: all 0.15s;
+    }
+    #weaponRow .slot.active {
+      border-color: #ffd54a; background: rgba(255,213,74,0.18);
+      transform: translateY(-4px) scale(1.05);
+    }
+    #weaponRow .key { font-size: 11px; opacity: 0.7; }
+    #weaponRow .icon { font-size: 22px; margin: 2px 0; }
+    #weaponRow .name { font-size: 12px; }
+    #weaponRow .ammo-mini { font-size: 11px; color: #ffd54a; opacity: 0.85; min-height: 14px; }
+
+    /* Sniper zoom overlay (vignette + scope crosshair when zoomed) */
+    #scope {
+      position: fixed; inset: 0; pointer-events: none; z-index: 9;
+      background: radial-gradient(circle at center, transparent 0, transparent 240px, #000 280px);
+      opacity: 0; transition: opacity 0.1s;
+    }
+    #scope.on { opacity: 1; }
+    #scope::before {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 1px; height: 480px; background: rgba(255,255,255,0.6);
+      transform: translate(-50%, -50%);
+    }
+    #scope::after {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 480px; height: 1px; background: rgba(255,255,255,0.6);
+      transform: translate(-50%, -50%);
+    }
+
+    /* Health (bottom left) */
+    #health {
+      position: fixed; bottom: 20px; left: 20px;
+      color: #fff; font-size: 18px; z-index: 10;
+      background: rgba(0,0,0,0.45); padding: 10px 16px; border-radius: 8px;
+    }
+    #health .bar { width: 200px; height: 14px; background: #333; border-radius: 7px; margin-top: 6px; overflow: hidden; }
+    #health .fill { height: 100%; background: linear-gradient(90deg, #4caf50, #8bc34a); transition: width 0.2s; }
+
+    /* Stamina (just above health) */
+    #stamina {
+      position: fixed; bottom: 90px; left: 20px;
+      color: #fff; font-size: 18px; z-index: 10;
+      background: rgba(0,0,0,0.45); padding: 10px 16px; border-radius: 8px;
+      direction: rtl;
+    }
+    #stamina .bar { width: 200px; height: 12px; background: #333; border-radius: 6px; margin-top: 6px; overflow: hidden; }
+    #stamina .fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2196f3, #03a9f4);
+      transition: width 0.1s linear, background 0.2s;
+    }
+    #stamina.low .fill { background: linear-gradient(90deg, #ff9800, #ffc107); }
+    #stamina.empty .fill { background: linear-gradient(90deg, #f44336, #e57373); }
+
+    /* Start screen overlay (asks to click to enter) */
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85); color: #fff; z-index: 100;
+      flex-direction: column; gap: 16px;
+      text-align: center; padding: 20px;
+    }
+    #overlay h1 { font-size: 48px; }
+    #overlay .controls { font-size: 18px; line-height: 1.8; opacity: 0.9; }
+    #overlay .pick { font-size: 20px; color: #ffd54a; margin-top: 10px; }
+    #overlay .difficulty { display: flex; gap: 12px; margin-top: 8px; }
+    #overlay button {
+      font-size: 18px; padding: 12px 24px; border-radius: 8px;
+      border: 2px solid #fff; background: rgba(255,255,255,0.1); color: #fff;
+      cursor: pointer; min-width: 120px; transition: all 0.15s;
+    }
+    #overlay button:hover { background: #ffd54a; color: #000; transform: scale(1.05); }
+    #overlay button[data-diff="easy"]:hover   { background: #4caf50; }
+    #overlay button[data-diff="medium"]:hover { background: #ff9800; color: #000; }
+    #overlay button[data-diff="hard"]:hover   { background: #f44336; }
+
+    /* Multiplayer section: tabs (Solo / Host / Join) + lobby */
+    #overlay .mp-section {
+      width: 100%; max-width: 460px; direction: rtl;
+      background: rgba(0,0,0,0.35); padding: 12px; border-radius: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    #overlay .mp-tabs { display: flex; gap: 6px; justify-content: center; }
+    #overlay .mp-tab {
+      flex: 1; padding: 8px 12px; font-size: 14px; min-width: 0;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+      color: #fff; border-radius: 6px; cursor: pointer;
+    }
+    #overlay .mp-tab.active { background: #ffd54a; color: #000; border-color: #ffd54a; }
+    #overlay .mp-panel { font-size: 14px; padding: 6px 4px; }
+    #overlay .mp-panel.hidden { display: none; }
+    #overlay .mp-panel input {
+      padding: 8px 10px; font-size: 16px; border-radius: 6px; min-width: 0; width: 140px;
+      border: 2px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.08); color: #fff;
+      text-align: center; letter-spacing: 4px; text-transform: uppercase;
+    }
+    #overlay .mp-panel button {
+      padding: 8px 14px; font-size: 14px; min-width: 0; cursor: pointer;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff; border-radius: 6px;
+    }
+    #overlay .mp-panel button:hover { background: rgba(255,255,255,0.2); transform: none; }
+    #overlay .mp-panel .row { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
+    #overlay .mp-panel .room-code {
+      font-family: 'Courier New', monospace; font-size: 28px; font-weight: bold;
+      color: #ffd54a; letter-spacing: 6px;
+      background: rgba(0,0,0,0.4); padding: 6px 14px; border-radius: 6px;
+      cursor: pointer; user-select: all;
+    }
+    #overlay .mp-panel .room-code:hover { background: rgba(255,213,74,0.2); }
+    #overlay .mp-panel .hint { font-size: 12px; opacity: 0.65; margin-top: 4px; }
+    #overlay .mp-panel .status { font-size: 14px; min-height: 18px; padding: 4px; }
+    #overlay .mp-panel .status.error { color: #ff6b6b; }
+    #overlay .mp-panel .status.ok { color: #8be88a; }
+    #overlay .mp-panel .player-list {
+      display: flex; flex-direction: column; gap: 4px; padding: 4px 0;
+      font-size: 14px; max-height: 100px; overflow-y: auto;
+    }
+    #overlay .mp-panel .player-list .player {
+      display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+      background: rgba(255,255,255,0.05); border-radius: 4px;
+    }
+    #overlay .mp-panel .player-list .player .swatch { width: 12px; height: 12px; border-radius: 50%; }
+
+    /* Multiplayer waiting / "host hasn't started yet" notice */
+    #waitingForHost {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      color: #ffd54a; font-size: 22px; z-index: 50;
+      background: rgba(0,0,0,0.75); padding: 20px 36px; border-radius: 10px;
+      direction: rtl; text-align: center;
+    }
+    #waitingForHost .small { font-size: 14px; opacity: 0.8; margin-top: 6px; }
+
+    /* Quota input row on the start overlay */
+    #overlay .quota-row {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      font-size: 18px; margin-top: 12px; direction: rtl;
+    }
+    #overlay .quota-row input {
+      width: 90px; padding: 8px 10px; font-size: 18px; border-radius: 6px;
+      border: 2px solid #fff; background: rgba(255,255,255,0.1); color: #fff;
+      text-align: center;
+    }
+    #overlay .quota-hint { font-size: 13px; opacity: 0.7; direction: rtl; }
+    .hidden { display: none !important; }
+
+    /* Score / kills (top right) */
+    #score {
+      position: fixed; top: 20px; right: 20px;
+      color: #fff; font-size: 18px; z-index: 10;
+      background: rgba(0,0,0,0.45); padding: 10px 16px; border-radius: 8px;
+      direction: rtl;
+    }
+    #score .kills { font-size: 28px; font-weight: bold; color: #ffd54a; }
+    #score .target { font-size: 18px; opacity: 0.85; }
+    #score .diff  { opacity: 0.8; font-size: 14px; }
+
+    /* Damage flash (red overlay when hit) */
+    #damageFlash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 50;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(220,30,30,0.55) 100%);
+      opacity: 0; transition: opacity 0.18s;
+    }
+    #damageFlash.show { opacity: 1; }
+
+    /* Auth overlay (login / register / guest) — shown before #overlay */
+    #authOverlay {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff;
+      z-index: 300; flex-direction: column; gap: 14px; text-align: center;
+      padding: 20px;
+    }
+    #authOverlay h1 { font-size: 44px; margin-bottom: 4px; }
+    #authOverlay .subtitle { opacity: 0.7; font-size: 16px; margin-bottom: 18px; }
+    #authOverlay .auth-form { display: flex; flex-direction: column; gap: 10px; align-items: stretch; min-width: 280px; }
+    #authOverlay input {
+      padding: 12px 14px; font-size: 16px; border-radius: 8px;
+      border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.08); color: #fff;
+      direction: rtl;
+    }
+    #authOverlay input:focus { outline: none; border-color: #ffd54a; }
+    #authOverlay button {
+      padding: 12px 14px; font-size: 16px; border-radius: 8px; cursor: pointer;
+      border: 2px solid #fff; background: rgba(255,255,255,0.1); color: #fff;
+      transition: all 0.15s;
+    }
+    #authOverlay button:hover { transform: scale(1.02); }
+    #authOverlay #loginBtn:hover    { background: #4caf50; border-color: #4caf50; }
+    #authOverlay #registerBtn:hover { background: #2196f3; border-color: #2196f3; }
+    #authOverlay #guestBtn          { background: transparent; border-color: rgba(255,255,255,0.3); font-size: 14px; opacity: 0.8; }
+    #authOverlay #guestBtn:hover    { opacity: 1; }
+    #authOverlay .auth-error {
+      color: #ff6b6b; font-size: 14px; min-height: 20px; padding: 0 4px; direction: rtl;
+    }
+    #authOverlay .switch-row { font-size: 14px; opacity: 0.85; }
+    #authOverlay .switch-row a { color: #ffd54a; cursor: pointer; text-decoration: underline; }
+
+    /* User bar at top of main overlay */
+    #overlay .user-bar {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 14px; font-size: 16px; direction: rtl;
+      background: rgba(0,0,0,0.4); padding: 8px 16px; border-radius: 20px;
+    }
+    #overlay .user-bar .name { color: #ffd54a; font-weight: bold; }
+    #overlay .user-bar button {
+      font-size: 13px; padding: 4px 10px; min-width: 0; border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.4); background: transparent; color: #fff; cursor: pointer;
+    }
+    #overlay .user-bar button:hover { background: rgba(255,255,255,0.15); transform: none; }
+
+    /* User stats panel */
+    #overlay .user-stats {
+      display: flex; gap: 18px; font-size: 15px; direction: rtl;
+      background: rgba(0,0,0,0.35); padding: 8px 18px; border-radius: 8px;
+    }
+    #overlay .user-stats .num { font-weight: bold; color: #ffd54a; font-size: 18px; }
+
+    /* Favorite weapon loadout */
+    #overlay .loadout-label { font-size: 16px; opacity: 0.85; margin-top: 8px; }
+    #overlay .loadout-picks {
+      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 460px;
+    }
+    #overlay .loadout-picks button {
+      min-width: 76px; padding: 8px 10px; font-size: 13px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    #overlay .loadout-picks button .ico { font-size: 20px; }
+    #overlay .loadout-picks button.fav {
+      background: #ffd54a; color: #000; border-color: #ffd54a;
+      box-shadow: 0 0 12px rgba(255,213,74,0.5);
+    }
+
+    /* Game-over overlay */
+    #gameOver, #victory {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; z-index: 200;
+      flex-direction: column; gap: 16px; text-align: center;
+    }
+    #gameOver { background: rgba(40,0,0,0.85); }
+    #victory  { background: rgba(0,40,10,0.88); }
+    #gameOver h1 { font-size: 56px; color: #ff6b6b; }
+    #victory  h1 { font-size: 60px; color: #ffd54a; text-shadow: 0 0 20px rgba(255,215,90,0.5); }
+    #gameOver .stats, #victory .stats { font-size: 20px; line-height: 1.6; }
+    #gameOver button, #victory button {
+      font-size: 18px; padding: 12px 24px; border-radius: 8px;
+      border: 2px solid #fff; background: rgba(255,255,255,0.1); color: #fff;
+      cursor: pointer; margin-top: 12px;
+    }
+    #gameOver button:hover, #victory button:hover { background: #fff; color: #000; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="crosshair"></div>
+
+  <div id="hud">
+    <div class="weapon" id="weaponName">אקדח</div>
+    <div class="ammo">
+      <span id="ammo">12</span> / <span id="ammoMax">12</span>
+      <span class="reserve" id="ammoReserve">+36</span>
+    </div>
+  </div>
+
+  <div id="grenadeCounter">💣 רימונים: <span class="num" id="grenadeCount">0</span></div>
+
+  <div id="weaponRow">
+    <div class="slot active" data-weapon="pistol"><span class="key">1</span><span class="icon">🔫</span><span class="name">אקדח</span><span class="ammo-mini" data-ammo="pistol">12/12</span></div>
+    <div class="slot" data-weapon="rifle"><span class="key">2</span><span class="icon">🪖</span><span class="name">רובה סער</span><span class="ammo-mini" data-ammo="rifle">30/30</span></div>
+    <div class="slot" data-weapon="sniper"><span class="key">3</span><span class="icon">🎯</span><span class="name">צלפים</span><span class="ammo-mini" data-ammo="sniper">5/5</span></div>
+    <div class="slot" data-weapon="shotgun"><span class="key">4</span><span class="icon">💥</span><span class="name">רובה ציד</span><span class="ammo-mini" data-ammo="shotgun">8/8</span></div>
+    <div class="slot" data-weapon="sword"><span class="key">5</span><span class="icon">⚔️</span><span class="name">חרב</span><span class="ammo-mini" data-ammo="sword">∞</span></div>
+    <div class="slot" data-weapon="flamethrower"><span class="key">6</span><span class="icon">🔥</span><span class="name">להביור</span><span class="ammo-mini" data-ammo="flamethrower">100/100</span></div>
+  </div>
+
+  <div id="scope"></div>
+
+  <div id="health">
+    HP: <span id="hpText">100</span>
+    <div class="bar"><div class="fill" id="hpFill" style="width: 100%"></div></div>
+  </div>
+
+  <div id="stamina">
+    סטמינה: <span id="staminaText">100</span>
+    <div class="bar"><div class="fill" id="staminaFill" style="width: 100%"></div></div>
+  </div>
+
+  <div id="authOverlay">
+    <h1>🎮 FPS Game</h1>
+    <div class="subtitle">התחבר כדי לשמור הריגות וניצחונות</div>
+    <div class="auth-form">
+      <input type="text" id="authUsername" placeholder="שם משתמש" autocomplete="username" maxlength="20" />
+      <input type="password" id="authPassword" placeholder="סיסמה (לפחות 4 תווים)" autocomplete="current-password" maxlength="60" />
+      <div class="auth-error" id="authError">&nbsp;</div>
+      <button id="loginBtn">🔐 התחבר</button>
+      <button id="registerBtn">✨ הרשמה חדשה</button>
+      <button id="guestBtn">המשך כאורח (ללא שמירה)</button>
+    </div>
+  </div>
+
+  <div id="overlay" class="hidden">
+    <div class="user-bar">
+      <span>שלום, <span class="name" id="userName">—</span></span>
+      <button id="logoutBtn">התנתק</button>
+    </div>
+    <h1>🎮 FPS Game</h1>
+    <div class="user-stats" id="userStats">
+      <div>🎯 הריגות: <span class="num" id="statsKills">0</span></div>
+      <div>🏆 ניצחונות: <span class="num" id="statsVictories">0</span></div>
+      <div>💀 מוות: <span class="num" id="statsDeaths">0</span></div>
+    </div>
+    <div class="controls">
+      <strong>WASD</strong> — תזוזה<br />
+      <strong>SHIFT</strong> — ספרינט (מרוקן סטמינה)<br />
+      <strong>עכבר</strong> — הסתכלות<br />
+      <strong>רווח</strong> — קפיצה<br />
+      <strong>לחיצה שמאלית</strong> — ירייה<br />
+      <strong>R</strong> — טעינה מחדש<br />
+      <strong>1-6</strong> — החלפת נשק (אקדח / רובה / צלפים / רובה ציד / חרב / להביור)<br />
+      <strong>G</strong> — זריקת רימון<br />
+      <strong>לחיצה ימנית</strong> — זום (רק לרובה צלפים)<br />
+      <strong>ESC</strong> — יציאה ממצב משחק
+    </div>
+    <div class="mp-section">
+      <div class="mp-tabs">
+        <button class="mp-tab active" data-mp="solo">🎯 סולו</button>
+        <button class="mp-tab" data-mp="host">🌐 ארח חדר</button>
+        <button class="mp-tab" data-mp="join">🔗 הצטרף</button>
+      </div>
+
+      <div class="mp-panel" data-panel="solo">
+        משחק עצמאי נגד בוטים בלבד.
+      </div>
+
+      <div class="mp-panel hidden" data-panel="host">
+        <div class="row" id="hostStartRow">
+          <button id="hostBtn">צור חדר חדש</button>
+        </div>
+        <div class="row hidden" id="hostRoomRow">
+          שתף את הקוד עם החברים:
+          <span class="room-code" id="hostCode">—</span>
+          <button id="hostLeaveBtn">סגור חדר</button>
+        </div>
+        <div class="hint" id="hostHint">לאחר שכולם יצטרפו, לחץ על רמת קושי כדי להתחיל לכולם יחד.</div>
+        <div class="player-list" id="hostPlayerList"></div>
+        <div class="status" id="hostStatus"></div>
+      </div>
+
+      <div class="mp-panel hidden" data-panel="join">
+        <div class="row" id="joinFormRow">
+          <input type="text" id="joinCode" placeholder="ABCDE" maxlength="5" />
+          <button id="joinBtn">הצטרף</button>
+        </div>
+        <div class="row hidden" id="joinedRow">
+          מחובר לחדר <span class="room-code" id="joinedCode">—</span>
+          <button id="clientLeaveBtn">צא מהחדר</button>
+        </div>
+        <div class="hint" id="joinHint">הקלד את הקוד שקיבלת מהמארח (5 תווים).</div>
+        <div class="player-list" id="clientPlayerList"></div>
+        <div class="status" id="joinStatus"></div>
+      </div>
+    </div>
+
+    <div class="loadout-label">נשק התחלתי מועדף:</div>
+    <div class="loadout-picks">
+      <button data-fav="pistol"><span class="ico">🔫</span><span>אקדח</span></button>
+      <button data-fav="rifle"><span class="ico">🪖</span><span>רובה סער</span></button>
+      <button data-fav="sniper"><span class="ico">🎯</span><span>צלפים</span></button>
+      <button data-fav="shotgun"><span class="ico">💥</span><span>רובה ציד</span></button>
+      <button data-fav="sword"><span class="ico">⚔️</span><span>חרב</span></button>
+      <button data-fav="flamethrower"><span class="ico">🔥</span><span>להביור</span></button>
+    </div>
+    <div class="quota-row">
+      <label for="botTarget">מספר בוטים בשלב:</label>
+      <input type="number" id="botTarget" min="1" max="200" value="25" />
+    </div>
+    <div class="quota-hint">ברירות מחדל לפי קושי: קל=10 · בינוני=25 · קשה=50 (1-200)</div>
+    <div class="pick">בחר רמת קושי כדי להתחיל:</div>
+    <div class="difficulty">
+      <button data-diff="easy">קל</button>
+      <button data-diff="medium">בינוני</button>
+      <button data-diff="hard">קשה</button>
+    </div>
+  </div>
+
+  <div id="score">
+    הריגות: <span class="kills" id="killCount">0</span><span class="target"> / <span id="killTargetLabel">—</span></span>
+    <div class="diff">רמה: <span id="diffLabel">—</span></div>
+  </div>
+
+  <div id="damageFlash"></div>
+
+  <div id="waitingForHost" class="hidden">
+    ⏳ ממתין למארח להתחיל את המשחק...
+    <div class="small">לחץ ESC כדי לחזור לתפריט</div>
+  </div>
+
+  <div id="gameOver" class="hidden">
+    <h1>נפלת בקרב 💀</h1>
+    <div class="stats">
+      הריגות: <span id="finalKills">0</span> / <span id="finalTarget">—</span><br />
+      רמת קושי: <span id="finalDiff">—</span>
+    </div>
+    <button id="restartBtn">משחק חדש</button>
+  </div>
+
+  <div id="victory" class="hidden">
+    <h1>🏆 ניצחון! 🏆</h1>
+    <div class="stats">
+      ניקית את השלב!<br />
+      הריגות: <span id="victoryKills">0</span><br />
+      רמת קושי: <span id="victoryDiff">—</span>
+    </div>
+    <button id="victoryRestartBtn">משחק חדש</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
