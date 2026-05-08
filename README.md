@@ -15,20 +15,43 @@ A father–son coding project — the gameplay grows alongside the build.
 - **Postprocessing**: bloom, tone mapping, procedural grass/wood/stone textures
 - **Synthesized sound effects** via WebAudio (no asset files)
 
+## Architecture
+
+- **Frontend**: Vite + Three.js, talks to the API over `/api/*`
+- **Backend**: Express + PostgreSQL (`server.js` + `db.js`)
+- **Auth**: bcrypt-hashed passwords, JWT session tokens (30-day expiry)
+- **Admin panel**: the first user to register becomes admin automatically
+
 ## Run locally
 
+You'll need a local Postgres instance. Then:
+
 ```bash
+cp .env.example .env
+# edit .env — set DATABASE_URL + JWT_SECRET
 npm install
-npm run dev
+npm run dev    # runs Vite (5174) + Express (3001) concurrently
 ```
 
-Open http://localhost:5174 — register an account, pick a weapon, hit a difficulty.
+Open http://localhost:5174 — the first user to register is granted admin.
+
+## Deploy to Railway
+
+1. Push this repo to GitHub.
+2. In Railway: **New Project → Deploy from GitHub repo** → pick this repo.
+3. **+ New → Database → Add PostgreSQL** in the same project.
+4. On the web service: **Variables → New Variable → Add Reference** →
+   pick `DATABASE_URL` from the Postgres service. Railway will inject it.
+5. **Variables → New Variable** → add `JWT_SECRET` set to a long random string.
+   Generate one with: `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"`.
+6. **Settings → Networking → Generate Domain** to get a public HTTPS URL.
+7. Open the URL — register the first account; you become admin.
 
 ## Build for production
 
 ```bash
-npm run build
-npm start    # serves dist/ on port $PORT (or 3000 by default)
+npm run build  # bundles the frontend into dist/
+npm start      # `node server.js` — serves dist/ + API on $PORT
 ```
 
 ## Multiplayer

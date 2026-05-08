@@ -1924,10 +1924,20 @@ animate();
 
 // ─── User accounts (login / register / guest, stats, loadout) ─────────────
 let session = {
-  user: Auth.getCurrentUser(), // null if not logged in
-  guest: false,                // true if "continue as guest" was chosen
-  guestFavorite: 'pistol',     // session-only loadout for guests
+  user: Auth.getCurrentUser(),  // synchronous: returns the cached user (or null)
+  guest: false,
+  guestFavorite: 'pistol',
 };
+
+// On boot, ask the server "is my saved token still valid?" — if yes, refresh
+// our cached user (stats may have updated remotely); if no, drop the cache.
+Auth.tryRestoreSession().then(user => {
+  session.user = user;
+  if (user) {
+    showMainOverlay();
+    updateOverlayUserUI();
+  }
+}).catch(() => {});
 
 const authOverlayEl = document.getElementById('authOverlay');
 const userBarEl = document.getElementById('userName');
@@ -1954,15 +1964,21 @@ function refreshSessionUser() {
 }
 
 function updateOverlayUserUI() {
+  const adminBadge = document.getElementById('adminBadge');
+  const adminBtn = document.getElementById('adminBtn');
   if (session.user) {
     userBarEl.textContent = session.user.name;
     statsKillsEl.textContent = session.user.stats.kills;
     statsVictoriesEl.textContent = session.user.stats.victories;
     statsDeathsEl.textContent = session.user.stats.deaths;
     userStatsEl.style.display = '';
+    adminBadge.classList.toggle('hidden', !session.user.isAdmin);
+    adminBtn.classList.toggle('hidden', !session.user.isAdmin);
   } else {
     userBarEl.textContent = 'אורח';
     userStatsEl.style.display = 'none';
+    adminBadge.classList.add('hidden');
+    adminBtn.classList.add('hidden');
   }
   // Highlight the favorite weapon button
   const fav = getEffectiveFavorite();
@@ -2031,6 +2047,104 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   session.guest = false;
   showAuthScreen();
 });
+
+// ─── Admin panel ──────────────────────────────────────────────────────────
+const adminPanelEl = document.getElementById('adminPanel');
+const adminUsersGridEl = document.getElementById('adminUsersGrid');
+const adminSummaryEl = document.getElementById('adminSummary');
+const adminErrorEl = document.getElementById('adminError');
+
+document.getElementById('adminBtn').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if (!session.user || !session.user.isAdmin) return;
+  await openAdminPanel();
+});
+document.getElementById('adminCloseBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  adminPanelEl.classList.add('hidden');
+});
+
+async function openAdminPanel() {
+  adminPanelEl.classList.remove('hidden');
+  adminErrorEl.innerHTML = '&nbsp;';
+  adminUsersGridEl.innerHTML = '';
+  adminSummaryEl.textContent = 'טוען רשימת משתמשים...';
+  try {
+    const users = await Auth.listAllUsers();
+    renderAdminUsers(users);
+  } catch (err) {
+    adminErrorEl.textContent = err.message || 'שגיאה בטעינה';
+    adminSummaryEl.textContent = '';
+  }
+}
+
+function renderAdminUsers(users) {
+  adminSummaryEl.textContent =
+    `סה"כ ${users.length} משתמשים · ` +
+    `${users.filter(u => u.isAdmin).length} מנהלים · ` +
+    `${users.filter(u => u.isDisabled).length} מושבתים`;
+  adminUsersGridEl.innerHTML = '';
+  for (const u of users) {
+    const isMe = session.user && u.id === session.user.id;
+    const card = document.createElement('div');
+    card.className = 'user-card' + (u.isDisabled ? ' disabled' : '') + (u.isAdmin ? ' admin' : '');
+    const lastLogin = u.lastLogin ? new Date(u.lastLogin).toLocaleString('he-IL') : '—';
+    const created = u.createdAt ? new Date(u.createdAt).toLocaleDateString('he-IL') : '—';
+    card.innerHTML = `
+      <div class="row">
+        <span class="name" title="${u.name}">${u.name}${isMe ? ' (אני)' : ''}</span>
+        <span class="meta">${u.isAdmin ? '⭐ Admin' : ''} ${u.isDisabled ? '🚫 מושבת' : ''}</span>
+      </div>
+      <div class="meta">נרשם: ${created} · התחבר לאחרונה: ${lastLogin}</div>
+      <div class="stats">
+        <span>🎯 ${u.stats.kills}</span>
+        <span>🏆 ${u.stats.victories}</span>
+        <span>💀 ${u.stats.deaths}</span>
+        <span>🎮 ${u.stats.gamesPlayed}</span>
+      </div>
+      <div class="actions"></div>
+    `;
+    const actionsEl = card.querySelector('.actions');
+    if (!isMe) {
+      const toggleDisable = document.createElement('button');
+      toggleDisable.textContent = u.isDisabled ? 'הפעל' : 'השבת';
+      toggleDisable.onclick = () => adminAction(u.isDisabled ? Auth.enableUser : Auth.disableUser, u.id);
+      actionsEl.appendChild(toggleDisable);
+
+      const togglePromote = document.createElement('button');
+      togglePromote.className = 'promote';
+      togglePromote.textContent = u.isAdmin ? 'הורד מ-Admin' : 'הפוך ל-Admin';
+      togglePromote.onclick = () => adminAction(u.isAdmin ? Auth.demoteUser : Auth.promoteUser, u.id);
+      actionsEl.appendChild(togglePromote);
+
+      const del = document.createElement('button');
+      del.className = 'danger';
+      del.textContent = '🗑️ מחק';
+      del.onclick = async () => {
+        if (!confirm(`למחוק את ${u.name} לצמיתות?`)) return;
+        await adminAction(Auth.deleteUser, u.id);
+      };
+      actionsEl.appendChild(del);
+    } else {
+      const note = document.createElement('span');
+      note.className = 'meta';
+      note.textContent = '(לא ניתן לבצע פעולות על עצמך)';
+      actionsEl.appendChild(note);
+    }
+    adminUsersGridEl.appendChild(card);
+  }
+}
+
+async function adminAction(fn, userId) {
+  adminErrorEl.innerHTML = '&nbsp;';
+  try {
+    await fn(userId);
+    const users = await Auth.listAllUsers();
+    renderAdminUsers(users);
+  } catch (err) {
+    adminErrorEl.textContent = err.message || 'הפעולה נכשלה';
+  }
+}
 
 // Favorite weapon picker
 document.querySelectorAll('#overlay .loadout-picks button[data-fav]').forEach(btn => {

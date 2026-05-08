@@ -267,11 +267,68 @@
       background: rgba(0,0,0,0.4); padding: 8px 16px; border-radius: 20px;
     }
     #overlay .user-bar .name { color: #ffd54a; font-weight: bold; }
+    #overlay .user-bar .admin-badge {
+      background: #ffd54a; color: #000; font-size: 11px; font-weight: bold;
+      padding: 2px 8px; border-radius: 10px;
+    }
     #overlay .user-bar button {
       font-size: 13px; padding: 4px 10px; min-width: 0; border-radius: 14px;
       border: 1px solid rgba(255,255,255,0.4); background: transparent; color: #fff; cursor: pointer;
     }
     #overlay .user-bar button:hover { background: rgba(255,255,255,0.15); transform: none; }
+    #overlay .user-bar #adminBtn { border-color: #ffd54a; color: #ffd54a; }
+    #overlay .user-bar #adminBtn:hover { background: #ffd54a; color: #000; }
+
+    /* Admin panel — full-screen modal listing all users */
+    #adminPanel {
+      position: fixed; inset: 0;
+      display: flex; align-items: flex-start; justify-content: center;
+      background: rgba(10,10,30,0.95); color: #fff; z-index: 250;
+      flex-direction: column; padding: 24px; gap: 14px;
+      direction: rtl; overflow-y: auto;
+    }
+    #adminPanel header {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; max-width: 960px; align-self: center;
+    }
+    #adminPanel h1 { font-size: 28px; color: #ffd54a; }
+    #adminPanel .panel-close {
+      font-size: 14px; padding: 8px 16px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.4); background: transparent; color: #fff; cursor: pointer;
+    }
+    #adminPanel .panel-close:hover { background: rgba(255,255,255,0.15); }
+    #adminPanel .summary { font-size: 14px; opacity: 0.85; }
+    #adminPanel .users-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      width: 100%; max-width: 960px; align-self: center;
+    }
+    #adminPanel .user-card {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 8px;
+    }
+    #adminPanel .user-card.disabled { opacity: 0.55; border-color: #ff7b6b; }
+    #adminPanel .user-card.admin   { border-color: #ffd54a; }
+    #adminPanel .user-card .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    #adminPanel .user-card .name {
+      font-weight: bold; font-size: 18px; color: #ffd54a;
+      max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #adminPanel .user-card .meta { font-size: 12px; opacity: 0.7; }
+    #adminPanel .user-card .stats { display: flex; gap: 10px; font-size: 13px; }
+    #adminPanel .user-card .stats span { background: rgba(0,0,0,0.3); padding: 3px 8px; border-radius: 4px; }
+    #adminPanel .user-card .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    #adminPanel .user-card .actions button {
+      font-size: 12px; padding: 5px 10px; border-radius: 5px;
+      border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.05); color: #fff; cursor: pointer;
+    }
+    #adminPanel .user-card .actions button:hover { background: rgba(255,255,255,0.18); }
+    #adminPanel .user-card .actions .danger { border-color: #ff7b6b; color: #ff7b6b; }
+    #adminPanel .user-card .actions .danger:hover { background: #ff7b6b; color: #000; }
+    #adminPanel .user-card .actions .promote { border-color: #ffd54a; color: #ffd54a; }
+    #adminPanel .user-card .actions .promote:hover { background: #ffd54a; color: #000; }
+    #adminPanel .admin-error { color: #ff7b6b; min-height: 20px; }
 
     /* User stats panel */
     #overlay .user-stats {
@@ -457,6 +514,8 @@
   <div id="overlay" class="hidden">
     <div class="user-bar">
       <span>שלום, <span class="name" id="userName">—</span></span>
+      <span class="admin-badge hidden" id="adminBadge">ADMIN</span>
+      <button id="adminBtn" class="hidden">⚙️ ניהול</button>
       <button id="logoutBtn">התנתק</button>
     </div>
     <h1>🎮 FPS Game</h1>
@@ -549,6 +608,17 @@
   <div id="waitingForHost" class="hidden">
     ⏳ ממתין למארח להתחיל את המשחק...
     <div class="small">לחץ ESC כדי לחזור לתפריט</div>
+  </div>
+
+  <!-- Admin panel — only opens for users with isAdmin=true -->
+  <div id="adminPanel" class="hidden">
+    <header>
+      <h1>⚙️ ניהול משתמשים</h1>
+      <button class="panel-close" id="adminCloseBtn">✕ סגור</button>
+    </header>
+    <div class="summary" id="adminSummary">טוען...</div>
+    <div class="admin-error" id="adminError">&nbsp;</div>
+    <div class="users-grid" id="adminUsersGrid"></div>
   </div>
 
   <!-- Touch controls (only visible on touch devices, body.is-touch) -->

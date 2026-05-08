@@ -1,119 +1,150 @@
-// Local user accounts persisted in localStorage. Passwords are hashed with
-// SHA-256 + a per-user random salt — strong enough to keep curious eyes out
-// of the browser dev tools, NOT a substitute for a real auth backend.
+// Cloud-backed user accounts. Talks to the Express server (`server.js`) via
+// /api/auth/* and /api/me/* endpoints. The JWT issued by the server is kept
+// in localStorage so the player stays logged in across page refreshes.
+//
+// Public API kept compatible with the previous localStorage version so
+// `main.js` doesn't need many changes:
+//   - register(username, password) → user object
+//   - login(username, password) → user object
+//   - logout() → void
+//   - getCurrentUser() → user object | null  (synchronous, reads cache)
+//   - bumpStat(key, by)             — fire-and-forget API call, also caches locally
+//   - setFavoriteWeapon(id)         — same
+//   - tryRestoreSession()           — async, validates the cached token at boot
+//   - listUsernames()               — admin only (uses /api/admin/users)
+//   - wipeAll()                     — clears local cache (does NOT touch server data)
 
-const STORAGE_KEY = 'fps_users_v1';
+const TOKEN_KEY = 'fps_token_v2';
+const USER_CACHE_KEY = 'fps_user_v2';
 
-function loadStorage() {
+let cachedUser = null;
+
+function loadCachedUser() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { users: {}, currentUser: null };
-    const data = JSON.parse(raw);
-    return {
-      users: data.users || {},
-      currentUser: data.currentUser || null,
-    };
-  } catch {
-    return { users: {}, currentUser: null };
+    const raw = localStorage.getItem(USER_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveCachedUser(user) {
+  cachedUser = user;
+  if (user) localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
+  else localStorage.removeItem(USER_CACHE_KEY);
+}
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+cachedUser = loadCachedUser();
+
+async function api(path, { method = 'GET', body, auth = false } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth) {
+    const t = getToken();
+    if (t) headers['Authorization'] = 'Bearer ' + t;
   }
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    throw new Error('אין חיבור לשרת');
+  }
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) {
+    const msg = data?.error || `שגיאה (${res.status})`;
+    throw new Error(msg);
+  }
+  return data;
 }
 
-function saveStorage(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-}
-
-const toHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-async function hashPassword(password, saltHex) {
-  const buf = new TextEncoder().encode(saltHex + ':' + password);
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return toHex(new Uint8Array(digest));
-}
-
-function newSalt() {
-  return toHex(crypto.getRandomValues(new Uint8Array(16)));
-}
-
-function defaultUserRecord(salt, passwordHash) {
-  return {
-    salt,
-    passwordHash,
-    createdAt: Date.now(),
-    stats: { kills: 0, victories: 0, deaths: 0, gamesPlayed: 0 },
-    loadout: { favoriteWeapon: 'pistol' },
-  };
-}
-
-export function listUsernames() {
-  return Object.keys(loadStorage().users);
-}
-
+// ─── Public API ──────────────────────────────────────────────────────────
 export async function register(username, password) {
-  username = (username || '').trim();
-  if (username.length < 2) throw new Error('שם משתמש חייב להיות לפחות 2 תווים');
-  if (username.length > 20) throw new Error('שם משתמש ארוך מדי');
-  if (!password || password.length < 4) throw new Error('סיסמה חייבת להיות לפחות 4 תווים');
-  const data = loadStorage();
-  if (data.users[username]) throw new Error('שם המשתמש כבר תפוס');
-  const salt = newSalt();
-  const passwordHash = await hashPassword(password, salt);
-  data.users[username] = defaultUserRecord(salt, passwordHash);
-  data.currentUser = username;
-  saveStorage(data);
-  return getCurrentUser();
+  const data = await api('/api/auth/register', { method: 'POST', body: { username, password } });
+  setToken(data.token);
+  saveCachedUser(data.user);
+  return data.user;
 }
 
 export async function login(username, password) {
-  username = (username || '').trim();
-  const data = loadStorage();
-  const user = data.users[username];
-  if (!user) throw new Error('שם משתמש לא קיים');
-  const hash = await hashPassword(password, user.salt);
-  if (hash !== user.passwordHash) throw new Error('סיסמה שגויה');
-  data.currentUser = username;
-  saveStorage(data);
-  return getCurrentUser();
+  const data = await api('/api/auth/login', { method: 'POST', body: { username, password } });
+  setToken(data.token);
+  saveCachedUser(data.user);
+  return data.user;
 }
 
 export function logout() {
-  const data = loadStorage();
-  data.currentUser = null;
-  saveStorage(data);
+  setToken(null);
+  saveCachedUser(null);
 }
 
+// Synchronous read of the cached user. Call `tryRestoreSession()` on app boot
+// to validate the token with the server before relying on this.
 export function getCurrentUser() {
-  const data = loadStorage();
-  if (!data.currentUser) return null;
-  const user = data.users[data.currentUser];
-  if (!user) return null;
-  return {
-    name: data.currentUser,
-    createdAt: user.createdAt,
-    stats: { ...user.stats },
-    loadout: { ...user.loadout },
-  };
+  return cachedUser;
 }
 
-// Increment a numeric stat for the current user.
+// On boot: if we have a token, validate it with the server. If valid, refresh
+// the cached user; if not, clear local state. Returns the (refreshed) user.
+export async function tryRestoreSession() {
+  if (!getToken()) return null;
+  try {
+    const data = await api('/api/auth/me', { auth: true });
+    saveCachedUser(data.user);
+    return data.user;
+  } catch {
+    setToken(null);
+    saveCachedUser(null);
+    return null;
+  }
+}
+
+// Fire-and-forget stat updater. Updates the local cache immediately so the UI
+// reflects the change, then sends to the server. If the server call fails we
+// keep the optimistic local update (it'll resync on next login).
 export function bumpStat(key, by = 1) {
-  const data = loadStorage();
-  if (!data.currentUser) return;
-  const u = data.users[data.currentUser];
-  if (!u) return;
-  u.stats[key] = (u.stats[key] || 0) + by;
-  saveStorage(data);
+  if (!cachedUser) return;
+  if (!cachedUser.stats) cachedUser.stats = {};
+  cachedUser.stats[key] = (cachedUser.stats[key] || 0) + by;
+  saveCachedUser(cachedUser);
+  api('/api/me/stats', { method: 'POST', body: { [key]: by }, auth: true })
+    .then(data => { if (data?.user) saveCachedUser(data.user); })
+    .catch(() => {});
 }
 
 export function setFavoriteWeapon(weaponId) {
-  const data = loadStorage();
-  if (!data.currentUser) return;
-  const u = data.users[data.currentUser];
-  if (!u) return;
-  u.loadout.favoriteWeapon = weaponId;
-  saveStorage(data);
+  if (!cachedUser) return;
+  cachedUser.loadout = { ...(cachedUser.loadout || {}), favoriteWeapon: weaponId };
+  saveCachedUser(cachedUser);
+  api('/api/me/loadout', { method: 'PATCH', body: { favoriteWeapon: weaponId }, auth: true })
+    .catch(() => {});
 }
 
-// Dev helper: wipe all stored users (e.g. `__fps.auth.wipeAll()` in DevTools)
+// ─── Admin ───────────────────────────────────────────────────────────────
+export async function listAllUsers() {
+  const data = await api('/api/admin/users', { auth: true });
+  return data.users;
+}
+
+export async function disableUser(id)  { return api(`/api/admin/users/${id}/disable`,  { method: 'PATCH', auth: true }); }
+export async function enableUser(id)   { return api(`/api/admin/users/${id}/enable`,   { method: 'PATCH', auth: true }); }
+export async function promoteUser(id)  { return api(`/api/admin/users/${id}/promote`,  { method: 'PATCH', auth: true }); }
+export async function demoteUser(id)   { return api(`/api/admin/users/${id}/demote`,   { method: 'PATCH', auth: true }); }
+export async function deleteUser(id)   { return api(`/api/admin/users/${id}`,          { method: 'DELETE', auth: true }); }
+
+// ─── Debug / dev helpers (no longer touch server data) ──────────────────
+export function listUsernames() { return cachedUser ? [cachedUser.name] : []; }
 export function wipeAll() {
-  localStorage.removeItem(STORAGE_KEY);
+  setToken(null);
+  saveCachedUser(null);
 }
