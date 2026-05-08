@@ -867,6 +867,21 @@ function setWeapon(id) {
   updateWeaponHUD();
 }
 
+// Make every weapon-row slot tappable. On touch the player has no number
+// keys, so this is the only way to switch weapons on a phone. Click also
+// works on desktop for users who'd rather mouse than press 1-6.
+document.querySelectorAll('#weaponRow .slot[data-weapon]').forEach(slot => {
+  const switchTo = (e) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (!controls.isLocked || !game.alive) return;
+    setWeapon(slot.dataset.weapon);
+  };
+  slot.addEventListener('click', switchTo);
+  // Listen to touchstart explicitly so the look-area (which captures any
+  // free touch on the right half of the screen) doesn't swallow taps.
+  slot.addEventListener('touchstart', switchTo, { passive: false });
+});
+
 let fireCooldown = 0;
 let mouseDown = false;
 updateWeaponHUD();

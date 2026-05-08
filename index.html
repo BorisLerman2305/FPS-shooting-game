@@ -413,10 +413,67 @@
     /* Visible only when JS detects touch — we add `body.is-touch` then. */
     #touchControls { display: none; }
     body.is-touch #touchControls { display: block; }
-    body.is-touch #weaponRow { bottom: 130px; }
     /* On touch, hide keyboard-only hints in the start overlay */
     body.is-touch .controls { display: none; }
     body.is-touch #overlay .pick { font-size: 16px; }
+
+    /* ─── Mobile in-game HUD layout ──────────────────────────────────── */
+    /* Bottom area is reserved for the joystick + action buttons, so all
+       informational HUD elements move to the top half of the screen.    */
+    body.is-touch #health   {
+      top: 12px; bottom: auto; left: 12px; right: auto;
+      padding: 5px 10px; font-size: 13px;
+    }
+    body.is-touch #health .bar { width: 110px; height: 8px; margin-top: 4px; }
+
+    body.is-touch #stamina  {
+      top: 60px; bottom: auto; left: 12px; right: auto;
+      padding: 5px 10px; font-size: 12px;
+    }
+    body.is-touch #stamina .bar { width: 110px; height: 7px; margin-top: 4px; }
+
+    body.is-touch #score {
+      top: 12px; right: 12px; padding: 5px 10px; font-size: 12px;
+    }
+    body.is-touch #score .kills  { font-size: 18px; }
+    body.is-touch #score .target { font-size: 13px; }
+    body.is-touch #score .diff   { font-size: 11px; }
+
+    body.is-touch #grenadeCounter {
+      top: 64px; right: 12px; padding: 4px 10px; font-size: 12px;
+    }
+    body.is-touch #grenadeCounter .num { font-size: 16px; margin-inline-start: 4px; }
+
+    /* Current-weapon name + ammo: top center, stays out of crosshair area */
+    body.is-touch #hud {
+      top: 12px; right: auto; bottom: auto; left: 50%;
+      transform: translateX(-50%);
+      padding: 4px 12px; font-size: 13px; text-align: center;
+      min-width: 130px;
+    }
+    body.is-touch #hud .weapon { font-size: 15px; }
+    body.is-touch #hud .ammo   { font-size: 12px; }
+
+    /* Weapon row: top-center, just under the HUD. Compact icons only — */
+    /* tappable for weapon switching (no number keys on phones).          */
+    body.is-touch #weaponRow {
+      top: 70px; bottom: auto; left: 50%; transform: translateX(-50%);
+      gap: 4px; z-index: 70;
+    }
+    body.is-touch #weaponRow .slot {
+      min-width: 0; width: 46px; padding: 4px 0;
+      cursor: pointer; touch-action: manipulation;
+    }
+    body.is-touch #weaponRow .slot.active {
+      transform: translateY(-2px) scale(1.06);
+    }
+    body.is-touch #weaponRow .slot .name { display: none; }
+    body.is-touch #weaponRow .slot .icon { font-size: 18px; margin: 0; line-height: 1; }
+    body.is-touch #weaponRow .slot .key { font-size: 9px; opacity: 0.6; }
+    body.is-touch #weaponRow .slot .ammo-mini { font-size: 9px; min-height: 12px; }
+
+    /* The crosshair gets a little taller cushion of empty space above it
+       so it doesn't sit right under the weapon row. */
 
     #touchControls .joystick {
       position: fixed; left: 24px; bottom: 24px;
