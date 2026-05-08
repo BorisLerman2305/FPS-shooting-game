@@ -885,12 +885,45 @@ document.querySelectorAll('#weaponRow .slot[data-weapon]').forEach(slot => {
     if (e) { e.stopPropagation(); e.preventDefault(); }
     if (!controls.isLocked || !game.alive) return;
     setWeapon(slot.dataset.weapon);
+    // On touch, taps to switch weapons also close the drawer
+    document.body.classList.remove('weapon-drawer-open');
   };
   slot.addEventListener('click', switchTo);
-  // Listen to touchstart explicitly so the look-area (which captures any
-  // free touch on the right half of the screen) doesn't swallow taps.
   slot.addEventListener('touchstart', switchTo, { passive: false });
 });
+
+// Mobile: tapping the HUD (weapon name + ammo) opens / closes a drawer that
+// shows the full weapon row. Default state on touch is "drawer closed" — the
+// row stays out of the gameplay area until the player wants to switch.
+const _hudEl = document.getElementById('hud');
+const toggleWeaponDrawer = (e) => {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  // Drawer only makes sense on touch — desktop already shows the row inline
+  if (!document.body.classList.contains('is-touch')) return;
+  if (!controls.isLocked || !game.alive) return;
+  document.body.classList.toggle('weapon-drawer-open');
+};
+_hudEl.addEventListener('click', toggleWeaponDrawer);
+_hudEl.addEventListener('touchstart', toggleWeaponDrawer, { passive: false });
+
+// Tap anywhere outside the drawer or HUD closes it. We listen at the document
+// level on the capture phase so we see the touch before any inner handler.
+function maybeCloseDrawer(e) {
+  if (!document.body.classList.contains('weapon-drawer-open')) return;
+  const t = e.target;
+  if (t.closest('#weaponRow') || t.closest('#hud')) return;
+  document.body.classList.remove('weapon-drawer-open');
+}
+document.addEventListener('touchstart', maybeCloseDrawer, { passive: true, capture: true });
+document.addEventListener('click',      maybeCloseDrawer, { capture: true });
+
+// When the player switches weapons via number keys (1-6), also close any
+// open drawer so it doesn't linger on screen on hybrid touch laptops.
+document.addEventListener('keydown', (e) => {
+  if (e.code && /^Digit[1-6]$/.test(e.code)) {
+    document.body.classList.remove('weapon-drawer-open');
+  }
+}, true);
 
 let fireCooldown = 0;
 let mouseDown = false;

@@ -433,62 +433,134 @@
     body.is-touch #overlay .pick { font-size: 16px; }
 
     /* ─── Mobile in-game HUD layout ──────────────────────────────────── */
-    /* Bottom area is reserved for the joystick + action buttons, so all
-       informational HUD elements move to the top half of the screen.    */
+    /* The bottom area is reserved for the joystick + action buttons, so all
+       informational HUD lives in the top half. Safe-area insets respect the
+       iPhone notch / Dynamic Island when the device is in either orientation. */
     body.is-touch #health   {
-      top: 12px; bottom: auto; left: 12px; right: auto;
+      top: calc(8px + env(safe-area-inset-top));
+      bottom: auto; left: calc(8px + env(safe-area-inset-left)); right: auto;
       padding: 5px 10px; font-size: 13px;
     }
-    body.is-touch #health .bar { width: 110px; height: 8px; margin-top: 4px; }
+    body.is-touch #health .bar { width: 100px; height: 7px; margin-top: 3px; }
 
     body.is-touch #stamina  {
-      top: 60px; bottom: auto; left: 12px; right: auto;
-      padding: 5px 10px; font-size: 12px;
+      top: calc(50px + env(safe-area-inset-top));
+      bottom: auto; left: calc(8px + env(safe-area-inset-left)); right: auto;
+      padding: 4px 10px; font-size: 12px;
     }
-    body.is-touch #stamina .bar { width: 110px; height: 7px; margin-top: 4px; }
+    body.is-touch #stamina .bar { width: 100px; height: 6px; margin-top: 3px; }
 
     body.is-touch #score {
-      top: 12px; right: 12px; padding: 5px 10px; font-size: 12px;
+      top: calc(8px + env(safe-area-inset-top));
+      right: calc(8px + env(safe-area-inset-right));
+      padding: 4px 10px; font-size: 11px;
     }
-    body.is-touch #score .kills  { font-size: 18px; }
-    body.is-touch #score .target { font-size: 13px; }
-    body.is-touch #score .diff   { font-size: 11px; }
+    body.is-touch #score .kills  { font-size: 16px; }
+    body.is-touch #score .target { font-size: 12px; }
+    body.is-touch #score .diff   { font-size: 10px; }
 
     body.is-touch #grenadeCounter {
-      top: 64px; right: 12px; padding: 4px 10px; font-size: 12px;
+      top: calc(56px + env(safe-area-inset-top));
+      right: calc(8px + env(safe-area-inset-right));
+      padding: 4px 10px; font-size: 12px;
     }
-    body.is-touch #grenadeCounter .num { font-size: 16px; margin-inline-start: 4px; }
+    body.is-touch #grenadeCounter .num { font-size: 15px; margin-inline-start: 4px; }
 
-    /* Current-weapon name + ammo: top center, stays out of crosshair area */
+    /* Current-weapon HUD doubles as the trigger for the weapon drawer:
+       tapping it opens/closes a popover with the full slot row.          */
     body.is-touch #hud {
-      top: 12px; right: auto; bottom: auto; left: 50%;
+      top: calc(8px + env(safe-area-inset-top));
+      right: auto; bottom: auto; left: 50%;
       transform: translateX(-50%);
-      padding: 4px 12px; font-size: 13px; text-align: center;
-      min-width: 130px;
+      padding: 5px 14px; font-size: 13px; text-align: center;
+      min-width: 130px; cursor: pointer; user-select: none;
+      touch-action: manipulation;
     }
     body.is-touch #hud .weapon { font-size: 15px; }
     body.is-touch #hud .ammo   { font-size: 12px; }
-
-    /* Weapon row: top-center, just under the HUD. Compact icons only — */
-    /* tappable for weapon switching (no number keys on phones).          */
-    body.is-touch #weaponRow {
-      top: 70px; bottom: auto; left: 50%; transform: translateX(-50%);
-      gap: 4px; z-index: 70;
+    body.is-touch #hud::after {
+      content: '▼';
+      display: block;
+      font-size: 10px; opacity: 0.65; margin-top: 2px;
     }
+    body.is-touch.weapon-drawer-open #hud::after { content: '▲'; }
+    body.is-touch.weapon-drawer-open #hud {
+      background: rgba(255, 213, 74, 0.18);
+      border: 1px solid rgba(255, 213, 74, 0.5);
+      padding: 4px 13px;
+    }
+
+    /* Weapon row: collapsed by default on touch, expands as a drawer below
+       the HUD only while `body.weapon-drawer-open` is set.                */
+    body.is-touch #weaponRow { display: none; }
+    body.is-touch.in-game.weapon-drawer-open #weaponRow {
+      display: flex; flex-wrap: wrap;
+      top: calc(70px + env(safe-area-inset-top));
+      bottom: auto; left: 50%; transform: translateX(-50%);
+      gap: 6px; z-index: 80;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(6px);
+      padding: 8px;
+      border-radius: 12px;
+      max-width: min(360px, 92vw);
+      justify-content: center;
+      animation: drawerSlide 0.18s ease-out;
+    }
+    @keyframes drawerSlide { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
     body.is-touch #weaponRow .slot {
-      min-width: 0; width: 46px; padding: 4px 0;
+      min-width: 0; width: 56px; padding: 6px 0;
       cursor: pointer; touch-action: manipulation;
     }
-    body.is-touch #weaponRow .slot.active {
-      transform: translateY(-2px) scale(1.06);
-    }
+    body.is-touch #weaponRow .slot.active { transform: translateY(-2px) scale(1.06); }
     body.is-touch #weaponRow .slot .name { display: none; }
-    body.is-touch #weaponRow .slot .icon { font-size: 18px; margin: 0; line-height: 1; }
+    body.is-touch #weaponRow .slot .icon { font-size: 22px; margin: 0; line-height: 1; }
     body.is-touch #weaponRow .slot .key { font-size: 9px; opacity: 0.6; }
     body.is-touch #weaponRow .slot .ammo-mini { font-size: 9px; min-height: 12px; }
 
-    /* The crosshair gets a little taller cushion of empty space above it
-       so it doesn't sit right under the weapon row. */
+    /* Joystick + action buttons honour iPhone home indicator */
+    body.is-touch #touchControls .joystick {
+      left: calc(20px + env(safe-area-inset-left));
+      bottom: calc(20px + env(safe-area-inset-bottom));
+    }
+    body.is-touch #touchControls .fire    { right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .jump    { right: calc(132px + env(safe-area-inset-right)); bottom: calc(62px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .reload  { right: calc(132px + env(safe-area-inset-right)); bottom: calc(142px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .grenade { right: calc(20px + env(safe-area-inset-right)); bottom: calc(132px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .sprint  { left: calc(166px + env(safe-area-inset-left)); bottom: calc(62px + env(safe-area-inset-bottom)); }
+
+    /* ─── Landscape phone (rotated) — tighter top bar, action buttons hugged to edges */
+    @media (orientation: landscape) and (max-height: 500px) {
+      body.is-touch #health   { top: calc(6px + env(safe-area-inset-top)); padding: 3px 8px; font-size: 11px; }
+      body.is-touch #health .bar { width: 90px; height: 6px; margin-top: 2px; }
+      body.is-touch #stamina  { top: calc(38px + env(safe-area-inset-top)); padding: 3px 8px; font-size: 10px; }
+      body.is-touch #stamina .bar { width: 90px; height: 5px; margin-top: 2px; }
+      body.is-touch #score          { top: calc(6px + env(safe-area-inset-top)); padding: 3px 8px; font-size: 10px; }
+      body.is-touch #score .kills   { font-size: 14px; }
+      body.is-touch #grenadeCounter { top: calc(40px + env(safe-area-inset-top)); padding: 3px 8px; font-size: 10px; }
+      body.is-touch #grenadeCounter .num { font-size: 13px; }
+      body.is-touch #hud { top: calc(6px + env(safe-area-inset-top)); font-size: 11px; padding: 3px 12px; min-width: 110px; }
+      body.is-touch #hud .weapon { font-size: 13px; }
+      body.is-touch #hud .ammo   { font-size: 11px; }
+      body.is-touch.in-game.weapon-drawer-open #weaponRow {
+        top: calc(56px + env(safe-area-inset-top));
+        max-width: min(420px, 80vw);
+      }
+      body.is-touch #weaponRow .slot { width: 48px; padding: 4px 0; }
+      body.is-touch #weaponRow .slot .icon { font-size: 18px; }
+      /* Make joystick + buttons a touch smaller in landscape so they don't dominate */
+      body.is-touch #touchControls .joystick { width: 110px; height: 110px; }
+      body.is-touch #touchControls .joystick .knob { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+      body.is-touch #touchControls .fire { width: 84px; height: 84px; font-size: 32px; }
+      body.is-touch #touchControls .action-btn { width: 60px; height: 60px; font-size: 24px; }
+    }
+
+    /* ─── Very small portrait (older phones) ───────────────────────────── */
+    @media (orientation: portrait) and (max-width: 380px) {
+      body.is-touch #health .bar  { width: 80px; }
+      body.is-touch #stamina .bar { width: 80px; }
+      body.is-touch #hud { min-width: 100px; padding: 4px 10px; font-size: 12px; }
+      body.is-touch #hud .weapon { font-size: 13px; }
+    }
 
     #touchControls .joystick {
       position: fixed; left: 24px; bottom: 24px;
