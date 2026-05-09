@@ -44,7 +44,9 @@
     body:not(.in-game) #weaponRow,
     body:not(.in-game) #crosshair,
     body:not(.in-game) #touchControls,
-    body:not(.in-game) #scope {
+    body:not(.in-game) #scope,
+    body:not(.in-game) #menuBtn,
+    body:not(.in-game) #coinHud {
       display: none !important;
     }
 
@@ -68,6 +70,23 @@
       direction: rtl;
     }
     #grenadeCounter .num { color: #ffd54a; font-weight: bold; font-size: 22px; margin-inline-start: 6px; }
+
+    /* Coins — same family as grenade counter, sits below it */
+    #coinHud {
+      position: fixed; top: 150px; right: 20px;
+      color: #fff; font-size: 16px; z-index: 10;
+      background: rgba(0,0,0,0.45); padding: 8px 14px; border-radius: 8px;
+      direction: rtl; display: flex; align-items: center; gap: 6px;
+    }
+    #coinHud .num { color: #ffd54a; font-weight: bold; font-size: 22px; }
+    #coinHud #coinFlash {
+      color: #ffd54a; font-size: 13px; opacity: 0;
+      transition: opacity 0.2s, transform 0.4s;
+      transform: translateY(0);
+    }
+    #coinHud.flashing #coinFlash { opacity: 1; transform: translateY(-12px); }
+    body.is-touch #coinHud { top: calc(108px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); padding: 4px 10px; font-size: 12px; }
+    body.is-touch #coinHud .num { font-size: 15px; }
 
     /* Weapon row (bottom center) — 5 slots, current is highlighted */
     #weaponRow {
@@ -365,6 +384,14 @@
       background: rgba(0,0,0,0.35); padding: 8px 18px; border-radius: 8px;
     }
     #overlay .user-stats .num { font-weight: bold; color: #ffd54a; font-size: 18px; }
+    /* Coin display in the user bar — gold pill */
+    #overlay .user-bar .coins {
+      background: rgba(255, 213, 74, 0.18);
+      border: 1px solid rgba(255, 213, 74, 0.5);
+      color: #ffd54a; font-weight: bold;
+      padding: 3px 10px; border-radius: 12px;
+      font-size: 13px;
+    }
 
     /* Favorite weapon loadout */
     #overlay .loadout-label { font-size: 16px; opacity: 0.85; margin-top: 8px; }
@@ -678,6 +705,28 @@
     /* Hide redundant on-screen hint about ESC etc when on touch */
     body.is-touch #overlay .pick.solo-hint { display: none; }
 
+    /* Quit-to-menu button — small icon at top-left of the gameplay screen.
+       Visible during play on every device (touch + desktop) so anyone can
+       bail out without dying or winning. */
+    #menuBtn {
+      position: fixed; z-index: 70;
+      top: calc(8px + env(safe-area-inset-top));
+      left: 50%; transform: translateX(-50%);
+      width: 38px; height: 38px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; cursor: pointer;
+      background: rgba(0,0,0,0.55); color: #fff;
+      border: 1px solid rgba(255,255,255,0.4);
+      user-select: none; -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    #menuBtn:hover, #menuBtn:active { background: rgba(255, 213, 74, 0.9); color: #000; transform: translateX(-50%) scale(1.05); }
+    body.is-touch #menuBtn { width: 44px; height: 44px; font-size: 22px; }
+    /* On mobile we move the HUD weapon name slightly down so the button
+       doesn't sit on top of it. */
+    body.is-touch #hud { top: calc(56px + env(safe-area-inset-top)); }
+    body.is-touch.weapon-drawer-open #weaponRow { top: calc(118px + env(safe-area-inset-top)); }
+
     /* iOS "Add to Home Screen" hint — only shown when running in Safari
        (i.e. not added to home screen yet). Tap anywhere on it to dismiss. */
     #iosHint {
@@ -713,6 +762,12 @@
   </div>
 
   <div id="grenadeCounter">💣 רימונים: <span class="num" id="grenadeCount">0</span></div>
+
+  <!-- Coin counter — visible during gameplay only -->
+  <div id="coinHud">💰 <span class="num" id="coinTotal">0</span><span id="coinFlash"></span></div>
+
+  <!-- "Quit to menu" — works on touch + desktop. Hidden until in-game. -->
+  <div id="menuBtn" title="חזרה לתפריט">⏏</div>
 
   <div id="weaponRow">
     <div class="slot active" data-weapon="pistol"><span class="key">1</span><span class="icon">🔫</span><span class="name">אקדח</span><span class="ammo-mini" data-ammo="pistol">12/12</span></div>
@@ -751,6 +806,7 @@
   <div id="overlay" class="hidden">
     <div class="user-bar">
       <span>שלום, <span class="name" id="userName">—</span></span>
+      <span class="coins hidden" id="userCoins">💰 0</span>
       <span class="admin-badge hidden" id="adminBadge">ADMIN</span>
       <button id="adminBtn" class="hidden">⚙️ ניהול</button>
       <button id="logoutBtn">התנתק</button>
@@ -880,7 +936,8 @@
     <h1>נפלת בקרב 💀</h1>
     <div class="stats">
       הריגות: <span id="finalKills">0</span> / <span id="finalTarget">—</span><br />
-      רמת קושי: <span id="finalDiff">—</span>
+      רמת קושי: <span id="finalDiff">—</span><br />
+      <span class="hidden" id="finalCoinsRow">💰 הרווחת <span id="finalCoins">0</span> מטבעות</span>
     </div>
     <button id="restartBtn">משחק חדש</button>
   </div>
@@ -890,7 +947,8 @@
     <div class="stats">
       ניקית את השלב!<br />
       הריגות: <span id="victoryKills">0</span><br />
-      רמת קושי: <span id="victoryDiff">—</span>
+      רמת קושי: <span id="victoryDiff">—</span><br />
+      <span class="hidden" id="victoryCoinsRow">💰 הרווחת <span id="victoryCoins">0</span> מטבעות</span>
     </div>
     <button id="victoryRestartBtn">משחק חדש</button>
   </div>

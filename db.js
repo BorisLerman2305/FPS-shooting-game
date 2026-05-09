@@ -35,10 +35,12 @@ export async function migrate() {
       victories       INTEGER NOT NULL DEFAULT 0,
       deaths          INTEGER NOT NULL DEFAULT 0,
       games_played   INTEGER NOT NULL DEFAULT 0,
+      coins           INTEGER NOT NULL DEFAULT 0,
       favorite_weapon VARCHAR(20) NOT NULL DEFAULT 'pistol'
     )
   `);
-  // Add a unique-ish lookup index for case-insensitive username search later if needed
+  // Make sure existing databases also pick up the new column.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS coins INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`CREATE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`);
   console.log('[db] migration complete');
 }
@@ -58,6 +60,7 @@ export function publicUser(row) {
       victories: row.victories,
       deaths: row.deaths,
       gamesPlayed: row.games_played,
+      coins: row.coins,
     },
     loadout: {
       favoriteWeapon: row.favorite_weapon,
@@ -100,16 +103,17 @@ export async function updateLoadout(id, favoriteWeapon) {
 }
 
 export async function bumpStats(id, deltas) {
-  // deltas: { kills?, victories?, deaths?, gamesPlayed? } — all integers
-  const { kills = 0, victories = 0, deaths = 0, gamesPlayed = 0 } = deltas;
+  // deltas: { kills?, victories?, deaths?, gamesPlayed?, coins? } — integers
+  const { kills = 0, victories = 0, deaths = 0, gamesPlayed = 0, coins = 0 } = deltas;
   await pool.query(
     `UPDATE users SET
        kills = kills + $2,
        victories = victories + $3,
        deaths = deaths + $4,
-       games_played = games_played + $5
+       games_played = games_played + $5,
+       coins = coins + $6
      WHERE id = $1`,
-    [id, kills, victories, deaths, gamesPlayed]
+    [id, kills, victories, deaths, gamesPlayed, coins]
   );
 }
 

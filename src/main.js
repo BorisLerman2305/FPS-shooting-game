@@ -713,8 +713,10 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
   game.kills = 0;
   game.pendingSpawns = 0;
   game.bossSpawned = false;
+  game.coinsThisGame = 0;          // coins earned this round (for the end-of-game screen)
   game.playerHP = game.playerHPMax;
   game.alive = true;
+  updateCoinHUD();
 
   // Resolve the kill target: explicit override (e.g. from host broadcast) wins,
   // else the input value if user edited it, else the difficulty default.
@@ -769,6 +771,12 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
   mouseDown = false;
   setZoom(false);
 
+  // Wipe remote-player avatars from any previous round, then re-create only
+  // for peers we're still actually connected to. Stops ghost figures from
+  // a disconnected friend lingering at their last reported position.
+  clearAllRemoteAvatars();
+  for (const peerId of net.getPeers()) ensureRemoteAvatar(peerId);
+
   // Spawn enemies — only in bots mode. PvP players hunt each other instead.
   clearBots();
   if (game.mode === 'bots') {
@@ -809,6 +817,17 @@ function damagePlayer(amount) {
     finalKillsEl.textContent = game.kills;
     finalTargetEl.textContent = game.killTarget;
     finalDiffEl.textContent = DIFFICULTIES[game.difficulty].label;
+    // Coins earned this round still belong to the player even on death
+    const coinsRow = document.getElementById('finalCoinsRow');
+    const coinsValEl = document.getElementById('finalCoins');
+    if (coinsRow && coinsValEl) {
+      if (game.mode === 'bots' && (game.coinsThisGame || 0) > 0) {
+        coinsValEl.textContent = game.coinsThisGame;
+        coinsRow.classList.remove('hidden');
+      } else {
+        coinsRow.classList.add('hidden');
+      }
+    }
     gameOverEl.classList.remove('hidden');
     controls.unlock();
   }
@@ -920,6 +939,61 @@ const WEAPONS = {
 
 const muzzleMat = () => new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0 });
 
+// ─── Player hands (FPS arms) ──────────────────────────────────────────────
+// Reusable hand factory. Each call returns a new Group with a sleeved
+// forearm + chunky glove + thumb + trigger finger, mirrored for 'left'/'right'.
+// Hands are added as children of the weapon model so they inherit recoil,
+// walk-bob, and sword swing animations for free.
+function createPlayerHand(side = 'right', opts = {}) {
+  const handG = new THREE.Group();
+  const sleeveColor = opts.sleeveColor ?? 0x3060b0;     // jersey blue
+  const cuffColor   = opts.cuffColor   ?? 0xffd54a;     // gold cuff trim
+  const gloveColor  = opts.gloveColor  ?? 0x1a1a1a;     // dark glove
+  const knuckleColor = opts.knuckleColor ?? 0x444444;   // slightly lighter knuckle plates
+
+  const sleeveMat = new THREE.MeshStandardMaterial({ color: sleeveColor, roughness: 0.8 });
+  const cuffMat   = new THREE.MeshStandardMaterial({ color: cuffColor,   roughness: 0.6, metalness: 0.2 });
+  const gloveMat  = new THREE.MeshStandardMaterial({ color: gloveColor,  roughness: 0.55 });
+  const knuckleMat = new THREE.MeshStandardMaterial({ color: knuckleColor, roughness: 0.5, metalness: 0.3 });
+
+  // Forearm — slightly conical so it tapers toward the wrist
+  const forearm = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.075, 0.34, 14),
+    sleeveMat
+  );
+  forearm.rotation.x = Math.PI / 2;
+  forearm.position.set(0, 0, 0.05);
+  forearm.castShadow = false;
+  // Cuff (thin band where the sleeve meets the glove)
+  const cuff = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.078, 0.078, 0.04, 14),
+    cuffMat
+  );
+  cuff.rotation.x = Math.PI / 2;
+  cuff.position.set(0, 0, -0.13);
+  // Glove palm — chunky rounded box
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.10, 0.16), gloveMat);
+  palm.position.set(0, 0, -0.2);
+  // Knuckle plate — small dark-grey strip across the back of the hand
+  const knuckle = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.025, 0.06), knuckleMat);
+  knuckle.position.set(0, 0.06, -0.21);
+  // Four flat fingers (a single rounded box) jutting forward from the palm
+  const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.075, 0.10), gloveMat);
+  fingers.position.set(0, -0.005, -0.31);
+  // Thumb on the inside (mirror-ed by side)
+  const sx = side === 'right' ? 1 : -1;
+  const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.09), gloveMat);
+  thumb.position.set(-sx * 0.075, 0.025, -0.24);
+  thumb.rotation.y = sx * 0.6;
+  // Trigger finger (extended slightly forward, used for guns)
+  const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.10), gloveMat);
+  trigger.position.set(sx * 0.04, -0.04, -0.34);
+
+  handG.add(forearm, cuff, palm, knuckle, fingers, thumb, trigger);
+  handG.userData.side = side;
+  return handG;
+}
+
 function createPistolModel() {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.18, 0.5),  new THREE.MeshStandardMaterial({ color: 0x222222 }));
@@ -928,7 +1002,11 @@ function createPistolModel() {
   barrel.position.set(0, 0.04, -0.35);
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), muzzleMat());
   muzzle.position.set(0, 0.04, -0.55);
-  g.add(body, barrel, muzzle);
+  // Right hand grips the back of the pistol — one-handed weapon
+  const rightHand = createPlayerHand('right');
+  rightHand.position.set(0.02, -0.07, 0.12);
+  rightHand.rotation.set(-0.25, -0.05, 0);
+  g.add(body, barrel, muzzle, rightHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
 }
@@ -943,7 +1021,14 @@ function createRifleModel() {
   const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), barrelMat); barrel.position.set(0, 0.04, -0.55);
   const mag    = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.12), bodyMat);   mag.position.set(0, -0.13, -0.10);
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), muzzleMat());  muzzle.position.set(0, 0.04, -0.78);
-  g.add(stock, body, barrel, mag, muzzle);
+  // Two hands: right on the trigger near the stock, left on the foregrip
+  const rightHand = createPlayerHand('right');
+  rightHand.position.set(0.02, -0.06, 0.05);
+  rightHand.rotation.set(-0.2, -0.05, 0);
+  const leftHand = createPlayerHand('left');
+  leftHand.position.set(-0.02, -0.06, -0.42);
+  leftHand.rotation.set(-0.15, 0.1, 0.1);
+  g.add(stock, body, barrel, mag, muzzle, rightHand, leftHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
 }
@@ -963,7 +1048,14 @@ function createSniperModel() {
   const lens = new THREE.Mesh(new THREE.CircleGeometry(0.045, 16), lensMat);
   lens.position.set(0, 0.13, 0.10); lens.rotation.y = Math.PI;
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), muzzleMat());  muzzle.position.set(0, 0.03, -1.18);
-  g.add(stock, body, barrel, scopeMain, lens, muzzle);
+  // Right hand on the trigger near the stock; left hand near the front of the body
+  const rightHand = createPlayerHand('right');
+  rightHand.position.set(0.02, -0.07, 0.06);
+  rightHand.rotation.set(-0.2, -0.05, 0);
+  const leftHand = createPlayerHand('left');
+  leftHand.position.set(-0.02, -0.06, -0.5);
+  leftHand.rotation.set(-0.15, 0.1, 0.1);
+  g.add(stock, body, barrel, scopeMain, lens, muzzle, rightHand, leftHand);
   g.position.set(0.30, -0.30, -0.55);
   return { group: g, muzzle };
 }
@@ -982,7 +1074,14 @@ function createShotgunModel() {
   const barrelR = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.55, 12), barrelMat);
   barrelR.rotation.x = Math.PI / 2; barrelR.position.set( 0.04, 0.03, -0.50);
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), muzzleMat()); muzzle.position.set(0, 0.03, -0.78);
-  g.add(stock, body, pump, barrelL, barrelR, muzzle);
+  // Right hand grips the rear, left hand on the pump
+  const rightHand = createPlayerHand('right');
+  rightHand.position.set(0.02, -0.07, 0.05);
+  rightHand.rotation.set(-0.2, -0.05, 0);
+  const leftHand = createPlayerHand('left');
+  leftHand.position.set(-0.02, -0.10, -0.32);
+  leftHand.rotation.set(-0.1, 0.1, 0.1);
+  g.add(stock, body, pump, barrelL, barrelR, muzzle, rightHand, leftHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
 }
@@ -1006,7 +1105,14 @@ function createFlamethrowerModel() {
     new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, opacity: 0 })
   );
   muzzle.position.set(0, 0.02, -0.85);
-  g.add(tank, grip, body, barrel, muzzle);
+  // Right hand on the grip behind the body, left hand bracing the tank
+  const rightHand = createPlayerHand('right');
+  rightHand.position.set(0.02, -0.15, -0.04);
+  rightHand.rotation.set(-0.25, -0.05, 0);
+  const leftHand = createPlayerHand('left');
+  leftHand.position.set(-0.02, -0.05, -0.50);
+  leftHand.rotation.set(-0.15, 0.1, 0.1);
+  g.add(tank, grip, body, barrel, muzzle, rightHand, leftHand);
   g.position.set(0.30, -0.30, -0.5);
   return { group: g, muzzle };
 }
@@ -1020,7 +1126,11 @@ function createSwordModel() {
   const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.025, 0.7),
     new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.9, roughness: 0.2 }));
   blade.position.set(0, 0, -0.32);
-  g.add(hilt, guard, blade);
+  // Right hand grips the hilt — sword is one-handed
+  const rightHand = createPlayerHand('right');
+  rightHand.position.set(0, -0.02, 0.21);
+  rightHand.rotation.set(-0.3, -0.05, 0);
+  g.add(hilt, guard, blade, rightHand);
   g.position.set(0.35, -0.32, -0.5);
   g.rotation.set(0, -0.2, 0); // hangs to the right at a slight angle
   return { group: g, muzzle: null };
@@ -1134,6 +1244,24 @@ document.querySelectorAll('#weaponRow .slot[data-weapon]').forEach(slot => {
   slot.addEventListener('click', switchTo);
   slot.addEventListener('touchstart', switchTo, { passive: false });
 });
+
+// "Quit to menu" — works on every device. Ends the current round (if any)
+// and brings the start overlay back so the player can pick a new game,
+// switch loadouts, or leave the room.
+const _menuBtnEl = document.getElementById('menuBtn');
+function quitToMenu(e) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  if (game.alive) {
+    game.alive = false;
+    if (controls.unlock) controls.unlock();
+    document.body.classList.remove('weapon-drawer-open');
+  }
+  // Show the menu the user belongs in (auth if logged out, otherwise main)
+  if (session.user || session.guest) overlay.classList.remove('hidden');
+  else showAuthScreen();
+}
+_menuBtnEl.addEventListener('click', quitToMenu);
+_menuBtnEl.addEventListener('touchstart', quitToMenu, { passive: false });
 
 // Mobile: tapping the HUD (weapon name + ammo) opens / closes a drawer that
 // shows the full weapon row. Default state on touch is "drawer closed" — the
@@ -1372,6 +1500,17 @@ function winGame() {
   Auth.bumpStat('gamesPlayed', 1);
   victoryKillsEl.textContent = game.kills;
   victoryDiffEl.textContent = DIFFICULTIES[game.difficulty].label;
+  // Show coin earnings (only meaningful in bots mode)
+  const coinsRow = document.getElementById('victoryCoinsRow');
+  const coinsValEl = document.getElementById('victoryCoins');
+  if (coinsRow && coinsValEl) {
+    if (game.mode === 'bots' && (game.coinsThisGame || 0) > 0) {
+      coinsValEl.textContent = game.coinsThisGame;
+      coinsRow.classList.remove('hidden');
+    } else {
+      coinsRow.classList.add('hidden');
+    }
+  }
   victoryEl.classList.remove('hidden');
   controls.unlock();
 }
@@ -1494,6 +1633,18 @@ function damageBot(bot, amount) {
     game.kills += 1;
     killCountEl.textContent = game.kills;
     Auth.bumpStat('kills', 1);
+
+    // Coins are only awarded in the PvE (bots + BOSS) mode — PvP doesn't
+    // pay out so no incentive to farm friends.
+    if (game.mode === 'bots') {
+      const reward = bot.isBoss ? 5 : 1;
+      game.coinsThisGame = (game.coinsThisGame || 0) + reward;
+      Auth.bumpStat('coins', reward);
+      // Pop a tiny "+N 💰" indicator near the kill counter
+      flashCoinReward(reward);
+      updateCoinHUD();
+    }
+
     if (game.kills >= game.killTarget) {
       winGame();
     } else {
@@ -2347,6 +2498,7 @@ function refreshSessionUser() {
 function updateOverlayUserUI() {
   const adminBadge = document.getElementById('adminBadge');
   const adminBtn = document.getElementById('adminBtn');
+  const userCoinsEl = document.getElementById('userCoins');
   if (session.user) {
     userBarEl.textContent = session.user.name;
     statsKillsEl.textContent = session.user.stats.kills;
@@ -2355,17 +2507,41 @@ function updateOverlayUserUI() {
     userStatsEl.style.display = '';
     adminBadge.classList.toggle('hidden', !session.user.isAdmin);
     adminBtn.classList.toggle('hidden', !session.user.isAdmin);
+    // Coin pill is logged-in only — guests don't accrue currency
+    userCoinsEl.textContent = '💰 ' + (session.user.stats.coins || 0);
+    userCoinsEl.classList.remove('hidden');
   } else {
     userBarEl.textContent = 'אורח';
     userStatsEl.style.display = 'none';
     adminBadge.classList.add('hidden');
     adminBtn.classList.add('hidden');
+    userCoinsEl.classList.add('hidden');
   }
   // Highlight the favorite weapon button
   const fav = getEffectiveFavorite();
   document.querySelectorAll('#overlay .loadout-picks button[data-fav]').forEach(b => {
     b.classList.toggle('fav', b.dataset.fav === fav);
   });
+}
+
+// In-game coin counter
+const coinHudEl    = document.getElementById('coinHud');
+const coinTotalEl  = document.getElementById('coinTotal');
+const coinFlashEl  = document.getElementById('coinFlash');
+let _coinFlashTimer = 0;
+
+function updateCoinHUD() {
+  if (!coinTotalEl) return;
+  const coins = session.user ? (session.user.stats.coins || 0) : 0;
+  coinTotalEl.textContent = coins;
+}
+
+function flashCoinReward(amount) {
+  if (!coinFlashEl || !coinHudEl) return;
+  coinFlashEl.textContent = '+' + amount;
+  coinHudEl.classList.add('flashing');
+  clearTimeout(_coinFlashTimer);
+  _coinFlashTimer = setTimeout(() => coinHudEl.classList.remove('flashing'), 600);
 }
 
 function showAuthScreen() {

@@ -132,12 +132,13 @@ app.patch('/api/me/loadout', authMiddleware(true), async (req, res) => {
 });
 
 app.post('/api/me/stats', authMiddleware(true), async (req, res) => {
-  // Accept partial deltas: { kills, victories, deaths, gamesPlayed }
+  // Accept partial deltas: { kills, victories, deaths, gamesPlayed, coins }
   const deltas = {};
-  for (const key of ['kills', 'victories', 'deaths', 'gamesPlayed']) {
+  for (const key of ['kills', 'victories', 'deaths', 'gamesPlayed', 'coins']) {
     const v = req.body[key];
     if (v == null) continue;
-    if (!Number.isFinite(v) || v < 0 || v > 1000) {
+    // Coins reward is small (max 5 per BOSS) — cap at 200 per call to be safe
+    if (!Number.isFinite(v) || v < 0 || v > 200) {
       return res.status(400).json({ error: `ערך לא חוקי עבור ${key}` });
     }
     deltas[key] = Math.floor(v);
