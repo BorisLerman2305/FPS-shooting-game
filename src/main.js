@@ -2684,6 +2684,59 @@ function tickTouchInput() {
 
 if (isTouch) console.log('Touch device detected — on-screen controls enabled.');
 
+// ─── Fullscreen / "open like an app" on mobile ───────────────────────────
+// Two paths:
+//   • Android Chrome / Firefox: a real Fullscreen API call hides the URL
+//     bar + nav buttons. Must be triggered from a user gesture so we wait
+//     for the first tap on any button and request it then.
+//   • iOS Safari: blocks programmatic fullscreen for browser pages. The
+//     only way to get a chrome-less experience is "Add to Home Screen" —
+//     once the user does that, our `apple-mobile-web-app-capable` meta tag
+//     makes it open in standalone mode. We show a one-time hint pointing
+//     them at the share menu.
+const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+const isStandaloneApp =
+  (window.navigator.standalone === true) ||
+  window.matchMedia('(display-mode: standalone)').matches ||
+  window.matchMedia('(display-mode: fullscreen)').matches;
+
+let _fullscreenRequested = false;
+function requestFullscreenIfMobile() {
+  if (_fullscreenRequested) return;
+  if (!isTouch) return;
+  if (isStandaloneApp) return; // already chrome-less, nothing to do
+  if (isiOS) return;           // Safari refuses; the hint covers this
+  _fullscreenRequested = true;
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return;
+  try {
+    const r = req.call(el);
+    if (r && r.catch) r.catch(() => {}); // user might cancel — silent
+  } catch {}
+}
+
+// Any tap on the auth buttons / overlay buttons / mp tabs counts as a user
+// gesture. Capture-phase so we run before the button's own handler fires.
+document.addEventListener('click', requestFullscreenIfMobile, { capture: true });
+document.addEventListener('touchend', requestFullscreenIfMobile, { capture: true, passive: true });
+
+// One-time iOS hint — only if we're in Safari and not yet a home-screen app
+if (isiOS && isTouch && !isStandaloneApp && !sessionStorage.getItem('fps_ios_hint_seen')) {
+  sessionStorage.setItem('fps_ios_hint_seen', '1');
+  setTimeout(() => {
+    const hint = document.createElement('div');
+    hint.id = 'iosHint';
+    hint.innerHTML =
+      '📱 לחווית מסך מלא ב-iPhone' +
+      '<div class="small">לחץ על <strong>שתף</strong> בתחתית הדפדפן ←<br><strong>הוסף למסך הבית</strong></div>' +
+      '<div class="close">(לחץ כאן לסגירה)</div>';
+    hint.addEventListener('click', () => hint.remove());
+    document.body.appendChild(hint);
+    setTimeout(() => { if (hint.isConnected) hint.remove(); }, 12000);
+  }, 1200);
+}
+
 // Dev hook — open DevTools and play with `__fps` (e.g. `__fps.bots[0].hp = 1`)
 window.__fps = {
   THREE, scene, camera, bots, game, stamina, controls,

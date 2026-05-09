@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="FPS Game" />
   <meta name="theme-color" content="#16213e" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
   <title>FPS Game — Stage 1</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -604,6 +609,26 @@
 
     /* Hide redundant on-screen hint about ESC etc when on touch */
     body.is-touch #overlay .pick.solo-hint { display: none; }
+
+    /* iOS "Add to Home Screen" hint — only shown when running in Safari
+       (i.e. not added to home screen yet). Tap anywhere on it to dismiss. */
+    #iosHint {
+      position: fixed; bottom: calc(20px + env(safe-area-inset-bottom));
+      left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.92); color: #ffd54a;
+      padding: 12px 20px; border-radius: 12px;
+      font-size: 14px; line-height: 1.5; max-width: 88vw;
+      text-align: center; z-index: 9999; cursor: pointer;
+      border: 1px solid rgba(255, 213, 74, 0.4);
+      animation: hintRise 0.3s ease-out;
+      direction: rtl;
+    }
+    #iosHint .small { font-size: 12px; opacity: 0.85; margin-top: 4px; color: #fff; }
+    #iosHint .close { font-size: 11px; opacity: 0.6; margin-top: 6px; }
+    @keyframes hintRise {
+      from { opacity: 0; transform: translate(-50%, 20px); }
+      to   { opacity: 1; transform: translate(-50%, 0); }
+    }
   </style>
 </head>
 <body>

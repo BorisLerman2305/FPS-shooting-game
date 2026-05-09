@@ -1,0 +1,22 @@
+{
+  "name": "FPS Game",
+  "short_name": "FPS",
+  "description": "Browser-based first-person shooter with multiplayer co-op",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#16213e",
+  "theme_color": "#16213e",
+  "lang": "he",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
