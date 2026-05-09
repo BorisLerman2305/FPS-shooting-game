@@ -20,6 +20,12 @@ function genRoomCode() {
   return s;
 }
 
+// A peer that hasn't sent ANY message in this many milliseconds is treated
+// as a zombie connection — we close it locally so the lobby roster stays
+// accurate even when WebRTC silently dies.
+const HEARTBEAT_INTERVAL_MS = 3000;
+const HEARTBEAT_TIMEOUT_MS = 9000;
+
 class Net extends EventTarget {
   constructor() {
     super();
@@ -30,6 +36,8 @@ class Net extends EventTarget {
     this.roomCode = null;
     this.profile = { name: 'Player', color: '#ffd54a', fav: 'pistol' };
     this.peerProfiles = new Map(); // peerId → { name, color, fav }
+    this.lastSeen = new Map();    // peerId → timestamp of last received message
+    this._heartbeatTimer = null;
   }
 
   setProfile(p) { Object.assign(this.profile, p); }
@@ -126,19 +134,59 @@ class Net extends EventTarget {
   }
 
   _wireOutgoing(conn) {
+    this.lastSeen.set(conn.peer, performance.now());
     conn.on('data', data => {
+      // Any inbound packet counts as a heartbeat — the connection is alive.
+      this.lastSeen.set(conn.peer, performance.now());
       if (data && data.type === 'hello') {
         this.peerProfiles.set(conn.peer, data.profile || {});
         this.dispatchEvent(new CustomEvent('peer-profile', { detail: { peerId: conn.peer, profile: data.profile } }));
         return;
       }
+      // ping/pong is internal — don't bubble it up to game code
+      if (data && (data.type === 'ping' || data.type === 'pong')) {
+        if (data.type === 'ping') {
+          try { conn.send({ type: 'pong' }); } catch {}
+        }
+        return;
+      }
       this.dispatchEvent(new CustomEvent('message', { detail: { from: conn.peer, data } }));
     });
-    conn.on('close', () => {
-      this.connections.delete(conn.peer);
-      this.peerProfiles.delete(conn.peer);
-      this.dispatchEvent(new CustomEvent('peer-leave', { detail: { peerId: conn.peer } }));
-    });
+    conn.on('close', () => this._cleanupPeer(conn.peer));
+    conn.on('error', () => this._cleanupPeer(conn.peer));
+    if (!this._heartbeatTimer) this._startHeartbeat();
+  }
+
+  _cleanupPeer(peerId) {
+    if (!this.connections.has(peerId)) return;
+    this.connections.delete(peerId);
+    this.peerProfiles.delete(peerId);
+    this.lastSeen.delete(peerId);
+    this.dispatchEvent(new CustomEvent('peer-leave', { detail: { peerId } }));
+  }
+
+  _startHeartbeat() {
+    this._heartbeatTimer = setInterval(() => {
+      const now = performance.now();
+      // Send a ping to every peer; the response is observed via `data` handler
+      for (const [peerId, conn] of this.connections) {
+        try { conn.send({ type: 'ping' }); } catch {}
+        // Drop peers we haven't heard from in too long
+        const last = this.lastSeen.get(peerId) ?? now;
+        if (now - last > HEARTBEAT_TIMEOUT_MS) {
+          try { conn.close(); } catch {}
+          this._cleanupPeer(peerId);
+        }
+      }
+      if (this.connections.size === 0) this._stopHeartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  _stopHeartbeat() {
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
   }
 
   _sayHello(conn) {
@@ -166,11 +214,13 @@ class Net extends EventTarget {
 
   // ─── Tear-down ──────────────────────────────────────────────────────────
   async leave() {
+    this._stopHeartbeat();
     for (const conn of this.connections.values()) {
       try { conn.close(); } catch {}
     }
     this.connections.clear();
     this.peerProfiles.clear();
+    this.lastSeen.clear();
     if (this.peer) {
       try { this.peer.destroy(); } catch {}
       this.peer = null;

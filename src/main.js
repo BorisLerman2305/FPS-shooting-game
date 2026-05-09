@@ -14,9 +14,10 @@ const scene = new THREE.Scene();
 const SKY_TOP = new THREE.Color(0x6cb9ff);    // deep blue overhead
 const SKY_HORIZON = new THREE.Color(0xffd6a0); // peach near horizon (Fortnite-ish)
 scene.background = SKY_HORIZON.clone();
-scene.fog = new THREE.Fog(0xffe6c7, 60, 180);  // warm tinted fog
+// Fog pushes back so players can actually take in the bigger map
+scene.fog = new THREE.Fog(0xffe6c7, 120, 380);
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 600);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200);
 camera.position.set(0, 1.7, 0); // eye height ~1.7m
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -31,7 +32,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 
 // Stylized sky dome with vertical gradient (no shaders — vertex colors are simpler)
 function buildSkyDome() {
-  const geo = new THREE.SphereGeometry(400, 32, 16);
+  const geo = new THREE.SphereGeometry(900, 32, 16);
   const positions = geo.attributes.position;
   const colors = new Float32Array(positions.count * 3);
   const top = SKY_TOP, mid = new THREE.Color(0xc8e9ff), low = SKY_HORIZON;
@@ -49,10 +50,10 @@ function buildSkyDome() {
   scene.add(sky);
   // Visible sun (just a glowy disc, not the actual light source)
   const sunSphere = new THREE.Mesh(
-    new THREE.SphereGeometry(12, 24, 24),
+    new THREE.SphereGeometry(28, 24, 24),
     new THREE.MeshBasicMaterial({ color: 0xfff4c4, fog: false, depthWrite: false })
   );
-  sunSphere.position.set(120, 180, -180);
+  sunSphere.position.set(280, 420, -420);
   scene.add(sunSphere);
 }
 buildSkyDome();
@@ -230,15 +231,23 @@ const sun = new THREE.DirectionalLight(0xfff2cc, 1.4);
 sun.position.set(40, 70, 30);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
-sun.shadow.camera.top = 60;   sun.shadow.camera.bottom = -60;
-sun.shadow.camera.near = 1;   sun.shadow.camera.far = 200;
+// Shadow frustum stays compact and follows the player every frame, so
+// shadows remain sharp on the bigger map without blowing up the GPU.
+sun.shadow.camera.left = -70; sun.shadow.camera.right = 70;
+sun.shadow.camera.top = 70;   sun.shadow.camera.bottom = -70;
+sun.shadow.camera.near = 1;   sun.shadow.camera.far = 220;
 sun.shadow.bias = -0.0008;
 scene.add(sun);
+scene.add(sun.target);
 
 // ─── World: textured ground + walls + varied scenery ─────────────────────
-const groundGeo = new THREE.PlaneGeometry(220, 220, 32, 32);
-const groundMat = new THREE.MeshStandardMaterial({ map: TEX_GRASS, roughness: 0.96, metalness: 0 });
+// Ground plane covers the entire arena with extra padding outside the walls
+// so the horizon never reveals the void.
+const groundGeo = new THREE.PlaneGeometry(1400, 1400, 64, 64);
+const groundTex = TEX_GRASS.clone();
+groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
+groundTex.repeat.set(140, 140);
+const groundMat = new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.96, metalness: 0 });
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
@@ -256,12 +265,13 @@ function addBox(w, h, d, x, y, z, mat) {
   return m;
 }
 
-// Outer perimeter walls — textured wood planks (50×50 arena)
-const ARENA = 50;
+// Outer perimeter walls — textured wood planks. Arena scaled up ~6× linear
+// (≈36× area) — feels much more open while staying performant.
+const ARENA = 300;
 const wallMatLong = new THREE.MeshStandardMaterial({ map: TEX_WALL.clone(), roughness: 0.85 });
-wallMatLong.map.repeat.set(20, 1);
+wallMatLong.map.repeat.set(120, 1);
 const wallMatLong2 = new THREE.MeshStandardMaterial({ map: TEX_WALL.clone(), roughness: 0.85 });
-wallMatLong2.map.repeat.set(1, 20);
+wallMatLong2.map.repeat.set(1, 120);
 addBox(ARENA * 2, 4, 1, 0, 2,  ARENA, wallMatLong);
 addBox(ARENA * 2, 4, 1, 0, 2, -ARENA, wallMatLong);
 addBox(1, 4, ARENA * 2,  ARENA, 2, 0, wallMatLong2);
@@ -367,46 +377,58 @@ function makeHut(x, z) {
   colliders.push({ mesh: wall, box });
 }
 
-// Scatter scenery across the arena
-for (let i = 0; i < 22; i++) {
+// Scatter scenery across the arena. Counts scaled with the new map size so
+// the world feels populated rather than barren — but capped so the GPU
+// doesn't choke. Far-away pieces simply won't have shadows (camera moves
+// with the player; see animate()).
+for (let i = 0; i < 240; i++) {
   let x, z, attempts = 0;
   do {
-    x = (Math.random() - 0.5) * (ARENA * 1.7);
-    z = (Math.random() - 0.5) * (ARENA * 1.7);
+    x = (Math.random() - 0.5) * (ARENA * 1.8);
+    z = (Math.random() - 0.5) * (ARENA * 1.8);
     attempts++;
   } while (!tryPlace(x, z, 1.6) && attempts < 12);
   if (attempts >= 12) continue;
-  makeTree(x, z, 0.9 + Math.random() * 0.7);
+  makeTree(x, z, 0.9 + Math.random() * 0.9);
 }
-for (let i = 0; i < 14; i++) {
+for (let i = 0; i < 140; i++) {
   let x, z, attempts = 0;
   do {
-    x = (Math.random() - 0.5) * (ARENA * 1.7);
-    z = (Math.random() - 0.5) * (ARENA * 1.7);
+    x = (Math.random() - 0.5) * (ARENA * 1.8);
+    z = (Math.random() - 0.5) * (ARENA * 1.8);
     attempts++;
   } while (!tryPlace(x, z, 1.2) && attempts < 12);
   if (attempts >= 12) continue;
-  makeRock(x, z, 0.7 + Math.random() * 0.8);
+  makeRock(x, z, 0.7 + Math.random() * 1.4);
 }
-for (let i = 0; i < 10; i++) {
+for (let i = 0; i < 80; i++) {
   let x, z, attempts = 0;
   do {
-    x = (Math.random() - 0.5) * (ARENA * 1.7);
-    z = (Math.random() - 0.5) * (ARENA * 1.7);
+    x = (Math.random() - 0.5) * (ARENA * 1.8);
+    z = (Math.random() - 0.5) * (ARENA * 1.8);
     attempts++;
   } while (!tryPlace(x, z, 1.1) && attempts < 12);
   if (attempts >= 12) continue;
-  makeCrate(x, z, 0.9 + Math.random() * 0.5);
+  makeCrate(x, z, 0.9 + Math.random() * 0.6);
 }
-for (let i = 0; i < 4; i++) {
+for (let i = 0; i < 18; i++) {
   let x, z, attempts = 0;
   do {
-    x = (Math.random() - 0.5) * (ARENA * 1.5);
-    z = (Math.random() - 0.5) * (ARENA * 1.5);
+    x = (Math.random() - 0.5) * (ARENA * 1.6);
+    z = (Math.random() - 0.5) * (ARENA * 1.6);
     attempts++;
   } while (!tryPlace(x, z, 3.5) && attempts < 18);
   if (attempts >= 18) continue;
   makeHut(x, z);
+}
+// Big landmark boulders on the far edges — give the player something to
+// orient to in the distance.
+for (let i = 0; i < 8; i++) {
+  const ang = (i / 8) * Math.PI * 2 + Math.random() * 0.4;
+  const r = ARENA * 0.85;
+  const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
+  if (!tryPlace(x, z, 4)) continue;
+  makeRock(x, z, 3 + Math.random() * 2);
 }
 
 // ─── Player controls (pointer lock = FPS mouse look) ──────────────────────
@@ -1042,16 +1064,18 @@ function createBot(spawnX, spawnZ, conf) {
 }
 
 function spawnOneBot(conf) {
-  // Pick a spawn far from the player and not inside an obstacle.
+  // Spawn in a ring 22-90m around the player so they can actually be found
+  // on the bigger map. Clamp to inside the arena, dodge obstacles.
   let x, z, attempts = 0;
   do {
-    x = (Math.random() - 0.5) * (ARENA * 1.7);
-    z = (Math.random() - 0.5) * (ARENA * 1.7);
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 22 + Math.random() * 68;
+    x = camera.position.x + Math.cos(angle) * dist;
+    z = camera.position.z + Math.sin(angle) * dist;
+    x = Math.max(-ARENA + 4, Math.min(ARENA - 4, x));
+    z = Math.max(-ARENA + 4, Math.min(ARENA - 4, z));
     attempts++;
-  } while (
-    attempts < 30 &&
-    (Math.hypot(x - camera.position.x, z - camera.position.z) < 18 || isInsideObstacle(x, z))
-  );
+  } while (attempts < 25 && isInsideObstacle(x, z));
   bots.push(createBot(x, z, conf));
 }
 
@@ -1552,21 +1576,27 @@ function spawnAllPickups() {
 
   const placedLocal = [];
   function placeOne() {
-    for (let attempt = 0; attempt < 30; attempt++) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      // Pickups spread across ~80% of the arena, never too close to spawn
       const x = (Math.random() - 0.5) * (ARENA * 1.6);
       const z = (Math.random() - 0.5) * (ARENA * 1.6);
       if (Math.hypot(x, z) < 8) continue;
       if (isInsideObstacle(x, z)) continue;
       let ok = true;
-      for (const p of placedLocal) if (Math.hypot(p.x - x, p.z - z) < 6) { ok = false; break; }
+      for (const p of placedLocal) if (Math.hypot(p.x - x, p.z - z) < 14) { ok = false; break; }
       if (!ok) continue;
       placedLocal.push({ x, z });
       return { x, z };
     }
     return null;
   }
-  // Distribution: more medkits + ammo crates than special items
-  const PLAN = ['medkit', 'medkit', 'ammo', 'ammo', 'ammo', 'grenade', 'flame'];
+  // Roomier map → more pickups so the player isn't running 200m to find HP.
+  const PLAN = [
+    'medkit', 'medkit', 'medkit', 'medkit',
+    'ammo', 'ammo', 'ammo', 'ammo', 'ammo',
+    'grenade', 'grenade',
+    'flame', 'flame',
+  ];
   for (const k of PLAN) {
     const loc = placeOne();
     if (!loc) continue;
@@ -1974,6 +2004,12 @@ function animate() {
   tickSparks(dt);
   tickPickups(dt, clock.elapsedTime);
   tickNetSync(dt);
+
+  // Sun + shadow camera follow the player so shadows stay sharp on the
+  // bigger map. The shadow frustum is small (~70m), but it moves with us.
+  sun.position.set(camera.position.x + 40, 70, camera.position.z + 30);
+  sun.target.position.set(camera.position.x, 0, camera.position.z);
+  sun.target.updateMatrixWorld();
 
   // Toggle the `in-game` body class so CSS can hide the gameplay HUD whenever
   // any menu overlay is open. classList.toggle with an explicit boolean is
@@ -2501,6 +2537,23 @@ net.addEventListener('peer-join', () => refreshPlayerLists());
 net.addEventListener('peer-leave', e => {
   removeRemoteAvatar(e.detail.peerId);
   refreshPlayerLists();
+  // If we're a client and the host went away, reset our lobby UI so the
+  // user knows they're no longer in a room. (In star topology, clients
+  // only ever connect to the host, so a peer-leave === host left.)
+  if (net.isClient() && net.peerCount() === 0) {
+    net.leave(); // tear down our peer object too
+    joinFormRow.classList.remove('hidden');
+    joinedRow.classList.add('hidden');
+    joinStatusEl.textContent = '⚠️ אבד החיבור למארח';
+    joinStatusEl.className = 'status error';
+    refreshDifficultyButtonsState();
+    // If a game was running, drop the player out of it back to the menu
+    if (game.alive) {
+      game.alive = false;
+      controls.unlock();
+      overlay.classList.remove('hidden');
+    }
+  }
 });
 net.addEventListener('peer-profile', e => {
   refreshPlayerLists();
