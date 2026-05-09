@@ -198,9 +198,18 @@ app.get('/api/health', async (req, res) => {
 
 // ─── Static client (production) ──────────────────────────────────────────
 const distDir = path.join(__dirname, 'dist');
-app.use(express.static(distDir, { maxAge: '1h' }));
-// SPA fallback so refreshing on any path serves the same index.html
+// Hashed Vite bundles inside /assets/* are content-addressed — safe to cache
+// for a long time; their filenames change on every rebuild.
+app.use('/assets', express.static(path.join(distDir, 'assets'), {
+  maxAge: '30d',
+  immutable: true,
+}));
+// Everything else (manifest, icon, etc.) — short cache so deploys propagate
+app.use(express.static(distDir, { maxAge: '5m' }));
+// SPA fallback. The HTML itself MUST NOT be cached aggressively or browsers
+// keep pointing at stale hashed bundles after a deploy.
 app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   res.sendFile(path.join(distDir, 'index.html'));
 });
 

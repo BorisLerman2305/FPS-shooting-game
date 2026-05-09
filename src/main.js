@@ -72,8 +72,12 @@ composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
 
 function handleResize() {
-  const w = window.innerWidth || document.documentElement.clientWidth;
-  const h = window.innerHeight || document.documentElement.clientHeight;
+  // Prefer visualViewport on mobile — it reflects the area NOT covered by
+  // the URL bar / system UI / virtual keyboard. window.innerWidth/Height
+  // can lie on Android Chrome while the URL bar is animating away.
+  const vv = window.visualViewport;
+  const w = (vv && vv.width)  || window.innerWidth  || document.documentElement.clientWidth;
+  const h = (vv && vv.height) || window.innerHeight || document.documentElement.clientHeight;
   if (w === 0 || h === 0) return;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -83,6 +87,20 @@ function handleResize() {
 }
 window.addEventListener('resize', handleResize);
 new ResizeObserver(handleResize).observe(document.documentElement);
+// Mobile-only events that fire when the URL bar collapses, the device rotates,
+// or fullscreen toggles — desktops never hit any of these but touch devices
+// hit them constantly during the first few seconds of gameplay.
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', handleResize);
+  window.visualViewport.addEventListener('scroll', handleResize);
+}
+window.addEventListener('orientationchange',         () => setTimeout(handleResize, 80));
+document.addEventListener('fullscreenchange',        () => setTimeout(handleResize, 80));
+document.addEventListener('webkitfullscreenchange',  () => setTimeout(handleResize, 80));
+// And one more "settle" pass shortly after load so a late URL-bar collapse
+// doesn't leave a black strip at the bottom of the canvas.
+setTimeout(handleResize, 400);
+setTimeout(handleResize, 1200);
 handleResize();
 
 // Activate WebAudio on the first user gesture (browsers require this)
@@ -239,6 +257,24 @@ sun.shadow.camera.near = 1;   sun.shadow.camera.far = 220;
 sun.shadow.bias = -0.0008;
 scene.add(sun);
 scene.add(sun.target);
+
+// Deterministic RNG so EVERY client lays out the same scenery in the same
+// places. Without this, host and joiner each call Math.random() independently
+// and end up wandering through visually different maps. We swap to a seeded
+// generator only for world generation; runtime randomness (particles,
+// AI jitter, etc.) stays on Math.random.
+function makeSeededRng(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const worldRng = makeSeededRng(20260507); // any fixed integer — same map for all
+const _origRandom = Math.random;
+Math.random = worldRng;
 
 // ─── World: textured ground + walls + varied scenery ─────────────────────
 // Ground plane covers the entire arena with extra padding outside the walls
@@ -430,6 +466,10 @@ for (let i = 0; i < 8; i++) {
   if (!tryPlace(x, z, 4)) continue;
   makeRock(x, z, 3 + Math.random() * 2);
 }
+
+// Restore the real Math.random — runtime systems (particles, AI jitter,
+// pickup respawn timing, etc.) want their own per-client randomness.
+Math.random = _origRandom;
 
 // ─── Player controls (pointer lock = FPS mouse look) ──────────────────────
 const controls = new PointerLockControls(camera, renderer.domElement);
