@@ -940,57 +940,77 @@ const WEAPONS = {
 const muzzleMat = () => new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0 });
 
 // ─── Player hands (FPS arms) ──────────────────────────────────────────────
-// Reusable hand factory. Each call returns a new Group with a sleeved
-// forearm + chunky glove + thumb + trigger finger, mirrored for 'left'/'right'.
-// Hands are added as children of the weapon model so they inherit recoil,
-// walk-bob, and sword swing animations for free.
+// Reusable hand factory. Returns a Group whose local origin sits at the
+// WRIST. The forearm extends DOWNWARD (negative Y) like a real arm reaching
+// up to grip the gun; the glove + curled fingers wrap forward (-Z). This
+// way you simply place the wrist AT the visible grip on each weapon and
+// the forearm naturally trails outside the gun body so the hand reads as
+// a hand, not a hidden blob.
 function createPlayerHand(side = 'right', opts = {}) {
   const handG = new THREE.Group();
-  const sleeveColor = opts.sleeveColor ?? 0x3060b0;     // jersey blue
-  const cuffColor   = opts.cuffColor   ?? 0xffd54a;     // gold cuff trim
-  const gloveColor  = opts.gloveColor  ?? 0x1a1a1a;     // dark glove
-  const knuckleColor = opts.knuckleColor ?? 0x444444;   // slightly lighter knuckle plates
+  const sleeveColor  = opts.sleeveColor  ?? 0x3a78c8;     // jersey blue (bright, contrasts with dark guns)
+  const cuffColor    = opts.cuffColor    ?? 0xffd54a;     // gold trim
+  const gloveColor   = opts.gloveColor   ?? 0x2a2a2a;     // matte black glove
+  const fingerColor  = opts.fingerColor  ?? 0x383838;     // slightly lighter so fingers separate from palm
+  const knuckleColor = opts.knuckleColor ?? 0x6a6a6a;     // pale grey accents
 
-  const sleeveMat = new THREE.MeshStandardMaterial({ color: sleeveColor, roughness: 0.8 });
-  const cuffMat   = new THREE.MeshStandardMaterial({ color: cuffColor,   roughness: 0.6, metalness: 0.2 });
-  const gloveMat  = new THREE.MeshStandardMaterial({ color: gloveColor,  roughness: 0.55 });
-  const knuckleMat = new THREE.MeshStandardMaterial({ color: knuckleColor, roughness: 0.5, metalness: 0.3 });
+  const sleeveMat  = new THREE.MeshStandardMaterial({ color: sleeveColor,  roughness: 0.85 });
+  const cuffMat    = new THREE.MeshStandardMaterial({ color: cuffColor,    roughness: 0.5, metalness: 0.3 });
+  const gloveMat   = new THREE.MeshStandardMaterial({ color: gloveColor,   roughness: 0.5 });
+  const fingerMat  = new THREE.MeshStandardMaterial({ color: fingerColor,  roughness: 0.5 });
+  const knuckleMat = new THREE.MeshStandardMaterial({ color: knuckleColor, roughness: 0.4, metalness: 0.3 });
 
-  // Forearm — slightly conical so it tapers toward the wrist
+  const sx = side === 'right' ? 1 : -1;
+
+  // Short, fat forearm stub — clearly visible behind the glove without
+  // dropping off the bottom edge of the screen at typical FPS distances.
   const forearm = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.075, 0.34, 14),
+    new THREE.CylinderGeometry(0.08, 0.10, 0.12, 14),
     sleeveMat
   );
-  forearm.rotation.x = Math.PI / 2;
-  forearm.position.set(0, 0, 0.05);
-  forearm.castShadow = false;
-  // Cuff (thin band where the sleeve meets the glove)
+  // Tilt it BACK toward the player (positive Z) so it exits behind the
+  // gun rather than falling below the FOV.
+  forearm.position.set(sx * 0.025, -0.04, 0.06);
+  forearm.rotation.x = Math.PI / 2 - 0.55; // mostly horizontal, angled down a hair
+
+  // Gold cuff band where the sleeve meets the glove — high contrast
   const cuff = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.078, 0.078, 0.04, 14),
+    new THREE.CylinderGeometry(0.105, 0.105, 0.045, 14),
     cuffMat
   );
-  cuff.rotation.x = Math.PI / 2;
-  cuff.position.set(0, 0, -0.13);
-  // Glove palm — chunky rounded box
-  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.10, 0.16), gloveMat);
-  palm.position.set(0, 0, -0.2);
-  // Knuckle plate — small dark-grey strip across the back of the hand
-  const knuckle = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.025, 0.06), knuckleMat);
-  knuckle.position.set(0, 0.06, -0.21);
-  // Four flat fingers (a single rounded box) jutting forward from the palm
-  const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.075, 0.10), gloveMat);
-  fingers.position.set(0, -0.005, -0.31);
-  // Thumb on the inside (mirror-ed by side)
-  const sx = side === 'right' ? 1 : -1;
-  const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.09), gloveMat);
-  thumb.position.set(-sx * 0.075, 0.025, -0.24);
-  thumb.rotation.y = sx * 0.6;
-  // Trigger finger (extended slightly forward, used for guns)
-  const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.10), gloveMat);
-  trigger.position.set(sx * 0.04, -0.04, -0.34);
+  cuff.position.set(sx * 0.005, -0.005, 0.0);
+  cuff.rotation.x = Math.PI / 2 - 0.55;
+
+  // Glove palm — sits at the wrist, extending forward toward the grip
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.13), gloveMat);
+  palm.position.set(0, 0.005, -0.05);
+  palm.rotation.x = 0.15;
+
+  // Four fingers as ONE block, curled forward (wraps the gun grip)
+  const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.10, 0.11), fingerMat);
+  fingers.position.set(0, -0.03, -0.16);
+  fingers.rotation.x = 0.55; // curl down/around the grip
+
+  // Knuckle plate on top of the palm — adds detail visible from above
+  const knuckle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.02, 0.10), knuckleMat);
+  knuckle.position.set(0, 0.07, -0.04);
+  knuckle.rotation.x = 0.15;
+
+  // Thumb on the inside of the hand
+  const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.10), gloveMat);
+  thumb.position.set(-sx * 0.085, 0.03, -0.05);
+  thumb.rotation.set(0.1, sx * 0.6, sx * -0.2);
+
+  // Trigger finger — extended forward (only on right hand for guns)
+  const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.10), fingerMat);
+  trigger.position.set(sx * 0.05, -0.03, -0.18);
+  trigger.rotation.x = 0.2;
 
   handG.add(forearm, cuff, palm, knuckle, fingers, thumb, trigger);
   handG.userData.side = side;
+  // No shadow casting from hands — they're glued to the camera anyway, and
+  // shadow-mapping a fast-moving mesh next to the camera looks ugly.
+  handG.traverse(o => { if (o.isMesh) o.castShadow = false; });
   return handG;
 }
 
@@ -1002,10 +1022,9 @@ function createPistolModel() {
   barrel.position.set(0, 0.04, -0.35);
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), muzzleMat());
   muzzle.position.set(0, 0.04, -0.55);
-  // Right hand grips the back of the pistol — one-handed weapon
+  // Right hand wraps the back of the pistol — one-handed weapon
   const rightHand = createPlayerHand('right');
-  rightHand.position.set(0.02, -0.07, 0.12);
-  rightHand.rotation.set(-0.25, -0.05, 0);
+  rightHand.position.set(0, -0.03, 0.10);
   g.add(body, barrel, muzzle, rightHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
@@ -1023,11 +1042,9 @@ function createRifleModel() {
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), muzzleMat());  muzzle.position.set(0, 0.04, -0.78);
   // Two hands: right on the trigger near the stock, left on the foregrip
   const rightHand = createPlayerHand('right');
-  rightHand.position.set(0.02, -0.06, 0.05);
-  rightHand.rotation.set(-0.2, -0.05, 0);
+  rightHand.position.set(0, -0.03, 0.05);
   const leftHand = createPlayerHand('left');
-  leftHand.position.set(-0.02, -0.06, -0.42);
-  leftHand.rotation.set(-0.15, 0.1, 0.1);
+  leftHand.position.set(0, -0.04, -0.40);
   g.add(stock, body, barrel, mag, muzzle, rightHand, leftHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
@@ -1050,11 +1067,9 @@ function createSniperModel() {
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), muzzleMat());  muzzle.position.set(0, 0.03, -1.18);
   // Right hand on the trigger near the stock; left hand near the front of the body
   const rightHand = createPlayerHand('right');
-  rightHand.position.set(0.02, -0.07, 0.06);
-  rightHand.rotation.set(-0.2, -0.05, 0);
+  rightHand.position.set(0, -0.04, 0.05);
   const leftHand = createPlayerHand('left');
-  leftHand.position.set(-0.02, -0.06, -0.5);
-  leftHand.rotation.set(-0.15, 0.1, 0.1);
+  leftHand.position.set(0, -0.04, -0.30);
   g.add(stock, body, barrel, scopeMain, lens, muzzle, rightHand, leftHand);
   g.position.set(0.30, -0.30, -0.55);
   return { group: g, muzzle };
@@ -1076,11 +1091,9 @@ function createShotgunModel() {
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), muzzleMat()); muzzle.position.set(0, 0.03, -0.78);
   // Right hand grips the rear, left hand on the pump
   const rightHand = createPlayerHand('right');
-  rightHand.position.set(0.02, -0.07, 0.05);
-  rightHand.rotation.set(-0.2, -0.05, 0);
+  rightHand.position.set(0, -0.03, 0.05);
   const leftHand = createPlayerHand('left');
-  leftHand.position.set(-0.02, -0.10, -0.32);
-  leftHand.rotation.set(-0.1, 0.1, 0.1);
+  leftHand.position.set(0, -0.04, -0.22);
   g.add(stock, body, pump, barrelL, barrelR, muzzle, rightHand, leftHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
@@ -1105,13 +1118,11 @@ function createFlamethrowerModel() {
     new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, opacity: 0 })
   );
   muzzle.position.set(0, 0.02, -0.85);
-  // Right hand on the grip behind the body, left hand bracing the tank
+  // Right hand on the grip behind the body, left hand bracing the front
   const rightHand = createPlayerHand('right');
-  rightHand.position.set(0.02, -0.15, -0.04);
-  rightHand.rotation.set(-0.25, -0.05, 0);
+  rightHand.position.set(0, -0.10, -0.05);
   const leftHand = createPlayerHand('left');
-  leftHand.position.set(-0.02, -0.05, -0.50);
-  leftHand.rotation.set(-0.15, 0.1, 0.1);
+  leftHand.position.set(0, -0.05, -0.40);
   g.add(tank, grip, body, barrel, muzzle, rightHand, leftHand);
   g.position.set(0.30, -0.30, -0.5);
   return { group: g, muzzle };
@@ -1128,8 +1139,7 @@ function createSwordModel() {
   blade.position.set(0, 0, -0.32);
   // Right hand grips the hilt — sword is one-handed
   const rightHand = createPlayerHand('right');
-  rightHand.position.set(0, -0.02, 0.21);
-  rightHand.rotation.set(-0.3, -0.05, 0);
+  rightHand.position.set(0, -0.04, 0.18);
   g.add(hilt, guard, blade, rightHand);
   g.position.set(0.35, -0.32, -0.5);
   g.rotation.set(0, -0.2, 0); // hangs to the right at a slight angle
