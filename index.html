@@ -204,6 +204,15 @@
     }
     #overlay .mp-panel .player-list .player .swatch { width: 12px; height: 12px; border-radius: 50%; }
 
+    /* Host-mode radio row — pick "vs bots" or "PvP" before launching the room */
+    #overlay .mp-panel .host-mode-row {
+      display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+      background: rgba(255,255,255,0.04); border-radius: 6px;
+      font-size: 13px; line-height: 1.5;
+    }
+    #overlay .mp-panel .host-mode-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    #overlay .mp-panel .host-mode-row input[type="radio"] { width: auto; cursor: pointer; }
+
     /* Multiplayer waiting / "host hasn't started yet" notice */
     #waitingForHost {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -783,6 +792,11 @@
           שתף את הקוד עם החברים:
           <span class="room-code" id="hostCode">—</span>
           <button id="hostLeaveBtn">סגור חדר</button>
+        </div>
+        <div class="host-mode-row">
+          <span class="hint">סוג חדר:</span>
+          <label><input type="radio" name="hostMode" value="bots" checked> ⚔️ נגד בוטים (משחק רגיל + BOSS)</label>
+          <label><input type="radio" name="hostMode" value="pvp"> 🆚 שחקנים בלבד (PvP)</label>
         </div>
         <div class="hint" id="hostHint">לאחר שכולם יצטרפו, לחץ על רמת קושי כדי להתחיל לכולם יחד.</div>
         <div class="player-list" id="hostPlayerList"></div>

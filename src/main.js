@@ -272,9 +272,7 @@ function makeSeededRng(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-const worldRng = makeSeededRng(20260507); // any fixed integer — same map for all
 const _origRandom = Math.random;
-Math.random = worldRng;
 
 // ─── World: textured ground + walls + varied scenery ─────────────────────
 // Ground plane covers the entire arena with extra padding outside the walls
@@ -290,6 +288,11 @@ ground.receiveShadow = true;
 scene.add(ground);
 
 const colliders = []; // boxes the player & bullets must check against
+// Track every mesh added during arena construction so we can wipe + rebuild
+// the world when the player switches between PvP (small) and bots (big) modes.
+const arenaMeshes = [];
+
+function addArenaMesh(m) { arenaMeshes.push(m); }
 
 function addBox(w, h, d, x, y, z, mat) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -298,34 +301,32 @@ function addBox(w, h, d, x, y, z, mat) {
   scene.add(m);
   const box = new THREE.Box3().setFromObject(m);
   colliders.push({ mesh: m, box });
+  addArenaMesh(m);
   return m;
 }
 
-// Outer perimeter walls — textured wood planks. Arena scaled up ~6× linear
-// (≈36× area) — feels much more open while staying performant.
-const ARENA = 300;
-const wallMatLong = new THREE.MeshStandardMaterial({ map: TEX_WALL.clone(), roughness: 0.85 });
-wallMatLong.map.repeat.set(120, 1);
-const wallMatLong2 = new THREE.MeshStandardMaterial({ map: TEX_WALL.clone(), roughness: 0.85 });
-wallMatLong2.map.repeat.set(1, 120);
-addBox(ARENA * 2, 4, 1, 0, 2,  ARENA, wallMatLong);
-addBox(ARENA * 2, 4, 1, 0, 2, -ARENA, wallMatLong);
-addBox(1, 4, ARENA * 2,  ARENA, 2, 0, wallMatLong2);
-addBox(1, 4, ARENA * 2, -ARENA, 2, 0, wallMatLong2);
+// Two map sizes the player can play on:
+//   BIG_ARENA   — the open 600×600m field used in solo + co-op modes
+//   SMALL_ARENA — original 100×100m playfield, used for PvP duels
+const BIG_ARENA = 300;
+const SMALL_ARENA = 50;
+let ARENA = BIG_ARENA; // current arena, mutated by buildArena()
 
-// Helper: track placed objects so we don't stack scenery
-const placed = []; // { x, z, r }
+const wallMat = new THREE.MeshStandardMaterial({ map: TEX_WALL.clone(), roughness: 0.85 });
+
+// Object positions are tracked so scenery doesn't stack. Cleared on rebuild.
+const placed = [];
 function tryPlace(x, z, r) {
   for (const p of placed) {
     if (Math.hypot(p.x - x, p.z - z) < p.r + r) return false;
   }
-  if (Math.hypot(x, z) < 6) return false; // keep player spawn clear
+  if (Math.hypot(x, z) < 6) return false;
   if (Math.abs(x) > ARENA - 2 || Math.abs(z) > ARENA - 2) return false;
   placed.push({ x, z, r });
   return true;
 }
 
-// Trees — cone canopy + cylinder trunk (groups added as a single collider on the trunk)
+// Trees — cone canopy + cylinder trunk
 function makeTree(x, z, scale = 1) {
   const trunk = new THREE.Mesh(
     new THREE.CylinderGeometry(0.25 * scale, 0.32 * scale, 1.4 * scale, 8),
@@ -333,10 +334,9 @@ function makeTree(x, z, scale = 1) {
   );
   trunk.position.set(x, 0.7 * scale, z);
   trunk.castShadow = true; trunk.receiveShadow = true;
-  scene.add(trunk);
+  scene.add(trunk); addArenaMesh(trunk);
 
   const canopyColor = [0x4caf50, 0x66bb6a, 0x2e8b57, 0x388e3c][Math.floor(Math.random() * 4)];
-  // 2-stage canopy for a stylized look
   const canopyLow = new THREE.Mesh(
     new THREE.ConeGeometry(1.2 * scale, 1.6 * scale, 8),
     new THREE.MeshStandardMaterial({ color: canopyColor, roughness: 0.85 })
@@ -350,14 +350,13 @@ function makeTree(x, z, scale = 1) {
   canopyTop.position.set(x, 2.5 * scale, z);
   canopyTop.castShadow = true;
   scene.add(canopyLow, canopyTop);
+  addArenaMesh(canopyLow); addArenaMesh(canopyTop);
 
-  // Use the trunk's bounding box (slightly wider) as the collider
   const box = new THREE.Box3().setFromObject(trunk);
   box.expandByScalar(0.15);
   colliders.push({ mesh: trunk, box });
 }
 
-// Rocks — low-poly icosahedrons with stone texture
 function makeRock(x, z, scale = 1) {
   const geo = new THREE.IcosahedronGeometry(0.9 * scale, 0);
   const mat = new THREE.MeshStandardMaterial({ map: TEX_STONE, roughness: 1, metalness: 0 });
@@ -365,31 +364,28 @@ function makeRock(x, z, scale = 1) {
   rock.position.set(x, 0.55 * scale, z);
   rock.rotation.set(Math.random(), Math.random(), Math.random());
   rock.castShadow = true; rock.receiveShadow = true;
-  scene.add(rock);
+  scene.add(rock); addArenaMesh(rock);
   const box = new THREE.Box3().setFromObject(rock);
   colliders.push({ mesh: rock, box });
 }
 
-// Wooden crates — textured wood with darker plank wrap
 function makeCrate(x, z, size = 1) {
   const wood = new THREE.MeshStandardMaterial({ map: TEX_WOOD, roughness: 0.85 });
   const crate = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), wood);
   crate.position.set(x, size / 2, z);
   crate.castShadow = true; crate.receiveShadow = true;
-  scene.add(crate);
-  // Darker stripes on top to suggest planks (purely visual)
+  scene.add(crate); addArenaMesh(crate);
   const plankMat = new THREE.MeshStandardMaterial({ color: 0x6e4a26 });
   const stripeY = size + 0.001;
   for (let s = -1; s <= 1; s++) {
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(size + 0.02, 0.02, 0.1), plankMat);
     stripe.position.set(x, stripeY, z + s * (size / 3));
-    scene.add(stripe);
+    scene.add(stripe); addArenaMesh(stripe);
   }
   const box = new THREE.Box3().setFromObject(crate);
   colliders.push({ mesh: crate, box });
 }
 
-// Tiny hut — cube body + colored roof (red/blue/teal)
 function makeHut(x, z) {
   const roofColor = [0xc23b3b, 0x4a73c2, 0x3aa18a, 0xc28a3a][Math.floor(Math.random() * 4)];
   const w = 3.5, d = 3.2, h = 2.5;
@@ -399,8 +395,7 @@ function makeHut(x, z) {
   );
   wall.position.set(x, h / 2, z);
   wall.castShadow = true; wall.receiveShadow = true;
-  scene.add(wall);
-  // Pyramid-ish roof: cone with 4 segments (looks like a pyramid)
+  scene.add(wall); addArenaMesh(wall);
   const roof = new THREE.Mesh(
     new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.4, 4),
     new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.7 })
@@ -408,68 +403,219 @@ function makeHut(x, z) {
   roof.rotation.y = Math.PI / 4;
   roof.position.set(x, h + 0.7, z);
   roof.castShadow = true;
-  scene.add(roof);
+  scene.add(roof); addArenaMesh(roof);
   const box = new THREE.Box3().setFromObject(wall);
   colliders.push({ mesh: wall, box });
 }
 
-// Scatter scenery across the arena. Counts scaled with the new map size so
-// the world feels populated rather than barren — but capped so the GPU
-// doesn't choke. Far-away pieces simply won't have shadows (camera moves
-// with the player; see animate()).
-for (let i = 0; i < 240; i++) {
-  let x, z, attempts = 0;
-  do {
-    x = (Math.random() - 0.5) * (ARENA * 1.8);
-    z = (Math.random() - 0.5) * (ARENA * 1.8);
-    attempts++;
-  } while (!tryPlace(x, z, 1.6) && attempts < 12);
-  if (attempts >= 12) continue;
-  makeTree(x, z, 0.9 + Math.random() * 0.9);
-}
-for (let i = 0; i < 140; i++) {
-  let x, z, attempts = 0;
-  do {
-    x = (Math.random() - 0.5) * (ARENA * 1.8);
-    z = (Math.random() - 0.5) * (ARENA * 1.8);
-    attempts++;
-  } while (!tryPlace(x, z, 1.2) && attempts < 12);
-  if (attempts >= 12) continue;
-  makeRock(x, z, 0.7 + Math.random() * 1.4);
-}
-for (let i = 0; i < 80; i++) {
-  let x, z, attempts = 0;
-  do {
-    x = (Math.random() - 0.5) * (ARENA * 1.8);
-    z = (Math.random() - 0.5) * (ARENA * 1.8);
-    attempts++;
-  } while (!tryPlace(x, z, 1.1) && attempts < 12);
-  if (attempts >= 12) continue;
-  makeCrate(x, z, 0.9 + Math.random() * 0.6);
-}
-for (let i = 0; i < 18; i++) {
-  let x, z, attempts = 0;
-  do {
-    x = (Math.random() - 0.5) * (ARENA * 1.6);
-    z = (Math.random() - 0.5) * (ARENA * 1.6);
-    attempts++;
-  } while (!tryPlace(x, z, 3.5) && attempts < 18);
-  if (attempts >= 18) continue;
-  makeHut(x, z);
-}
-// Big landmark boulders on the far edges — give the player something to
-// orient to in the distance.
-for (let i = 0; i < 8; i++) {
-  const ang = (i / 8) * Math.PI * 2 + Math.random() * 0.4;
-  const r = ARENA * 0.85;
-  const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
-  if (!tryPlace(x, z, 4)) continue;
-  makeRock(x, z, 3 + Math.random() * 2);
+// ─── New scenery: lake, cave, ruin ───────────────────────────────────────
+function makeLake(x, z, radius) {
+  // Slightly inset water plane — visual only, no collider so the player
+  // can wade through it.
+  const water = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 32),
+    new THREE.MeshStandardMaterial({
+      color: 0x2e7fc1, roughness: 0.15, metalness: 0.5,
+      transparent: true, opacity: 0.86,
+    })
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(x, 0.04, z);
+  water.receiveShadow = true;
+  scene.add(water); addArenaMesh(water);
+  // A subtle darker rim of "wet earth" around the lake
+  const rim = new THREE.Mesh(
+    new THREE.RingGeometry(radius, radius + 0.6, 32),
+    new THREE.MeshStandardMaterial({ color: 0x3a2a16, roughness: 1 })
+  );
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.set(x, 0.03, z);
+  scene.add(rim); addArenaMesh(rim);
 }
 
-// Restore the real Math.random — runtime systems (particles, AI jitter,
-// pickup respawn timing, etc.) want their own per-client randomness.
-Math.random = _origRandom;
+function makeCave(x, z) {
+  // A horseshoe of tall rocks with a gap on the south side — feels like a
+  // cave entrance the player can run into.
+  const RING = 4;
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    if (ang > Math.PI * 0.35 && ang < Math.PI * 1.05) continue; // entrance gap
+    const rx = Math.cos(ang) * RING;
+    const rz = Math.sin(ang) * RING;
+    const rock = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(2.0 + Math.random() * 0.4, 0),
+      new THREE.MeshStandardMaterial({ map: TEX_STONE, roughness: 1, color: 0x8b8b9a })
+    );
+    rock.position.set(x + rx, 1.6, z + rz);
+    rock.scale.set(1 + Math.random() * 0.3, 2.2 + Math.random() * 0.6, 1 + Math.random() * 0.3);
+    rock.castShadow = true; rock.receiveShadow = true;
+    scene.add(rock); addArenaMesh(rock);
+    const box = new THREE.Box3().setFromObject(rock);
+    colliders.push({ mesh: rock, box });
+  }
+  // A flatter ceiling rock spanning the entrance
+  const cap = new THREE.Mesh(
+    new THREE.BoxGeometry(RING * 2.6, 1.2, 1.4),
+    new THREE.MeshStandardMaterial({ map: TEX_STONE, roughness: 1, color: 0x70707a })
+  );
+  cap.position.set(x, 4.2, z + RING * 0.7);
+  cap.rotation.y = Math.PI / 2;
+  cap.castShadow = true;
+  scene.add(cap); addArenaMesh(cap);
+}
+
+function makeRuin(x, z) {
+  // Cluster of broken stone walls + a few half-pillars — feels like a
+  // collapsed temple. All pieces are colliders so they double as cover.
+  const stoneMat = new THREE.MeshStandardMaterial({ map: TEX_STONE, roughness: 1, color: 0xc8c2b0 });
+  const pieces = [
+    { w: 6.2, h: 3.2, d: 0.7, ax: -2.5, az: -2.5, ry: 0 },
+    { w: 4.0, h: 1.8, d: 0.7, ax:  2.4, az: -1.0, ry: Math.PI / 6 },
+    { w: 4.6, h: 2.6, d: 0.7, ax:  1.0, az:  3.2, ry: -Math.PI / 8 },
+    { w: 2.5, h: 1.2, d: 0.7, ax: -3.0, az:  2.5, ry: Math.PI / 3 },
+  ];
+  for (const p of pieces) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), stoneMat);
+    wall.position.set(x + p.ax, p.h / 2, z + p.az);
+    wall.rotation.y = p.ry;
+    wall.castShadow = true; wall.receiveShadow = true;
+    scene.add(wall); addArenaMesh(wall);
+    const box = new THREE.Box3().setFromObject(wall);
+    colliders.push({ mesh: wall, box });
+  }
+  // A short broken pillar in the middle
+  const pillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.45, 0.5, 1.6, 12),
+    stoneMat
+  );
+  pillar.position.set(x, 0.8, z);
+  pillar.castShadow = true; pillar.receiveShadow = true;
+  scene.add(pillar); addArenaMesh(pillar);
+  const pbox = new THREE.Box3().setFromObject(pillar);
+  colliders.push({ mesh: pillar, box: pbox });
+}
+
+// ─── buildArena(size): build a world from scratch. Called at startup, and
+// again whenever the player switches between PvP and bots modes. Always
+// runs under the seeded RNG so every client lays scenery out identically.
+function buildArena(size) {
+  ARENA = size;
+  // Wipe any prior arena meshes from the scene + colliders + placement grid
+  for (const m of arenaMeshes) scene.remove(m);
+  arenaMeshes.length = 0;
+  colliders.length = 0;
+  placed.length = 0;
+
+  // Use a deterministic RNG ONLY for world generation
+  const rng = makeSeededRng(20260507 + size); // small map and big map differ
+  Math.random = rng;
+
+  // Outer perimeter walls — clone the wall material so each side gets its
+  // own texture-repeat tuned to the wall length.
+  const longSide  = wallMat.clone(); longSide.map = TEX_WALL.clone();
+  longSide.map.wrapS = longSide.map.wrapT = THREE.RepeatWrapping;
+  longSide.map.repeat.set(Math.max(8, ARENA * 0.4), 1);
+  const shortSide = wallMat.clone(); shortSide.map = TEX_WALL.clone();
+  shortSide.map.wrapS = shortSide.map.wrapT = THREE.RepeatWrapping;
+  shortSide.map.repeat.set(1, Math.max(8, ARENA * 0.4));
+  addBox(ARENA * 2, 4, 1, 0, 2,  ARENA, longSide);
+  addBox(ARENA * 2, 4, 1, 0, 2, -ARENA, longSide);
+  addBox(1, 4, ARENA * 2,  ARENA, 2, 0, shortSide);
+  addBox(1, 4, ARENA * 2, -ARENA, 2, 0, shortSide);
+
+  // Density scales with arena area so the small map doesn't choke on 240 trees
+  const isBig = size >= 100;
+  const counts = isBig
+    ? { trees: 240, rocks: 140, crates: 80, huts: 18, lakes: 4, caves: 3, ruins: 4, landmarks: 8 }
+    : { trees: 24,  rocks: 14,  crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0 };
+
+  // Special structures FIRST — they're chunkier and reserve a larger area
+  for (let i = 0; i < counts.lakes; i++) {
+    let x, z, attempts = 0, r = isBig ? 6 + Math.random() * 6 : 4;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.4);
+      z = (Math.random() - 0.5) * (ARENA * 1.4);
+      attempts++;
+    } while (!tryPlace(x, z, r + 1.5) && attempts < 15);
+    if (attempts >= 15) continue;
+    makeLake(x, z, r);
+  }
+  for (let i = 0; i < counts.caves; i++) {
+    let x, z, attempts = 0;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.6);
+      z = (Math.random() - 0.5) * (ARENA * 1.6);
+      attempts++;
+    } while (!tryPlace(x, z, 5) && attempts < 18);
+    if (attempts >= 18) continue;
+    makeCave(x, z);
+  }
+  for (let i = 0; i < counts.ruins; i++) {
+    let x, z, attempts = 0;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.5);
+      z = (Math.random() - 0.5) * (ARENA * 1.5);
+      attempts++;
+    } while (!tryPlace(x, z, 4.5) && attempts < 18);
+    if (attempts >= 18) continue;
+    makeRuin(x, z);
+  }
+  // Then the smaller filler scenery
+  for (let i = 0; i < counts.trees; i++) {
+    let x, z, attempts = 0;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.8);
+      z = (Math.random() - 0.5) * (ARENA * 1.8);
+      attempts++;
+    } while (!tryPlace(x, z, 1.6) && attempts < 12);
+    if (attempts >= 12) continue;
+    makeTree(x, z, 0.9 + Math.random() * 0.9);
+  }
+  for (let i = 0; i < counts.rocks; i++) {
+    let x, z, attempts = 0;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.8);
+      z = (Math.random() - 0.5) * (ARENA * 1.8);
+      attempts++;
+    } while (!tryPlace(x, z, 1.2) && attempts < 12);
+    if (attempts >= 12) continue;
+    makeRock(x, z, 0.7 + Math.random() * 1.4);
+  }
+  for (let i = 0; i < counts.crates; i++) {
+    let x, z, attempts = 0;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.8);
+      z = (Math.random() - 0.5) * (ARENA * 1.8);
+      attempts++;
+    } while (!tryPlace(x, z, 1.1) && attempts < 12);
+    if (attempts >= 12) continue;
+    makeCrate(x, z, 0.9 + Math.random() * 0.6);
+  }
+  for (let i = 0; i < counts.huts; i++) {
+    let x, z, attempts = 0;
+    do {
+      x = (Math.random() - 0.5) * (ARENA * 1.6);
+      z = (Math.random() - 0.5) * (ARENA * 1.6);
+      attempts++;
+    } while (!tryPlace(x, z, 3.5) && attempts < 18);
+    if (attempts >= 18) continue;
+    makeHut(x, z);
+  }
+  // Landmark boulders ringing the far edges (only on the big map)
+  for (let i = 0; i < counts.landmarks; i++) {
+    const ang = (i / counts.landmarks) * Math.PI * 2 + Math.random() * 0.4;
+    const r = ARENA * 0.85;
+    const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
+    if (!tryPlace(x, z, 4)) continue;
+    makeRock(x, z, 3 + Math.random() * 2);
+  }
+
+  // Restore the real Math.random for runtime systems
+  Math.random = _origRandom;
+}
+
+// Initial build — solo / co-op players get the big arena by default
+buildArena(BIG_ARENA);
 
 // ─── Player controls (pointer lock = FPS mouse look) ──────────────────────
 const controls = new PointerLockControls(camera, renderer.domElement);
@@ -497,11 +643,28 @@ const DIFFICULTIES = {
   hard:   { label: 'קשה',    count: 8, hp: 70, damage: 12, speed: 3.4, fireInterval: 0.9, sight: 40, defaultQuota: 50 },
 };
 
+// BOSS bot — replaces the FINAL kill in bot mode. Tankier, slower, hits hard.
+// Scaled relative to the chosen difficulty so it stays threatening but fair.
+function bossConfFor(diffKey) {
+  const c = DIFFICULTIES[diffKey];
+  return {
+    label: c.label + ' BOSS',
+    count: 1, hp: c.hp * 8, damage: c.damage * 2,
+    speed: Math.max(1.4, c.speed * 0.7),
+    fireInterval: c.fireInterval * 0.7,
+    sight: c.sight + 20,
+    defaultQuota: 1,
+    isBoss: true,
+  };
+}
+
 const game = {
   difficulty: 'medium',
+  mode: 'bots',           // 'bots' (PvE) or 'pvp' (player vs player only)
   kills: 0,
   killTarget: 25,         // total bots to kill to finish the stage (1-200)
   pendingSpawns: 0,       // bots scheduled to respawn (so we don't over-spawn)
+  bossSpawned: false,     // true once the BOSS has been pushed into the arena
   playerHP: 100,
   playerHPMax: 100,
   alive: false,           // true once a difficulty has been picked & game started
@@ -541,11 +704,15 @@ controls.addEventListener('unlock', () => {
   overlay.classList.remove('hidden');
 });
 
-function startGame(diffKey, overrideKillTarget) {
+function startGame(diffKey, overrideKillTarget, overrideMode) {
   const conf = DIFFICULTIES[diffKey];
   game.difficulty = diffKey;
+  // Mode: 'bots' (default, PvE with bots + a BOSS at the end) or 'pvp'
+  // (player-vs-player only, no bots, smaller arena).
+  game.mode = overrideMode || (net.isHost() ? (currentHostMode || 'bots') : 'bots');
   game.kills = 0;
   game.pendingSpawns = 0;
+  game.bossSpawned = false;
   game.playerHP = game.playerHPMax;
   game.alive = true;
 
@@ -563,8 +730,12 @@ function startGame(diffKey, overrideKillTarget) {
 
   // If we're the multiplayer host, tell everyone else to start with the same params
   if (net.isHost() && overrideKillTarget == null) {
-    net.broadcast({ type: 'start-game', difficulty: diffKey, killTarget: target });
+    net.broadcast({ type: 'start-game', difficulty: diffKey, killTarget: target, mode: game.mode });
   }
+
+  // PvP plays on the original tight arena; bots/co-op uses the big map
+  const desiredArena = game.mode === 'pvp' ? SMALL_ARENA : BIG_ARENA;
+  if (ARENA !== desiredArena) buildArena(desiredArena);
   // Reflect resolved value in the input so the user sees what's running
   botTargetInput.value = target;
   botTargetUserEdited = false;
@@ -597,13 +768,23 @@ function startGame(diffKey, overrideKillTarget) {
   fireCooldown = 0;
   mouseDown = false;
   setZoom(false);
+
+  // Spawn enemies — only in bots mode. PvP players hunt each other instead.
+  clearBots();
+  if (game.mode === 'bots') {
+    if (target === 1) {
+      // Single-target round → straight to the BOSS, no warm-up
+      game.bossSpawned = true;
+      spawnOneBot(bossConfFor(diffKey));
+    } else {
+      const initialBatch = Math.min(conf.count, target - 1);
+      for (let i = 0; i < initialBatch; i++) spawnOneBot(conf);
+    }
+  }
   // Reset player position
   camera.position.set(0, 1.7, 0);
   velocity.set(0, 0, 0);
-  // Clear any existing bots and spawn fresh ones (capped by remaining quota)
-  clearBots();
-  const initialBatch = Math.min(conf.count, target);
-  for (let i = 0; i < initialBatch; i++) spawnOneBot(conf);
+  // (Bot spawning happens earlier — clearBots + bots/PvP branch above.)
   // Hide overlay + lock pointer
   overlay.classList.add('hidden');
   controls.lock();
@@ -1006,10 +1187,17 @@ const BOT_PALETTES = [
   { body: 0x52d97e, accent: 0x2c9c52, head: 0xfff0d8, eyes: 0x111111 }, // green
 ];
 
+// A vivid red palette reserved for BOSS bots so they're instantly recognisable
+const BOSS_PALETTE = { body: 0x8b0000, accent: 0xff2010, head: 0xfff0d8, eyes: 0xffe000 };
+
 function createBot(spawnX, spawnZ, conf) {
   const group = new THREE.Group();
-  const palette = BOT_PALETTES[Math.floor(Math.random() * BOT_PALETTES.length)];
-  const bodyMat   = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.6 });
+  const isBoss = !!conf.isBoss;
+  const palette = isBoss
+    ? BOSS_PALETTE
+    : BOT_PALETTES[Math.floor(Math.random() * BOT_PALETTES.length)];
+  const bodyMat   = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.6,
+    emissive: isBoss ? 0x440000 : 0x000000, emissiveIntensity: isBoss ? 0.3 : 0 });
   const accentMat = new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.6 });
   const headMat   = new THREE.MeshStandardMaterial({ color: palette.head, roughness: 0.65 });
 
@@ -1054,6 +1242,17 @@ function createBot(spawnX, spawnZ, conf) {
   cap.position.y = 2.5;
   cap.castShadow = true;
   group.add(cap);
+
+  // BOSS gets a noticeably larger silhouette + a glowing aura
+  if (isBoss) {
+    group.scale.setScalar(1.7);
+    const aura = new THREE.Mesh(
+      new THREE.SphereGeometry(1.4, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xff4020, transparent: true, opacity: 0.18, depthWrite: false, fog: false })
+    );
+    aura.position.y = 1.4;
+    group.add(aura);
+  }
 
   // HP bar floating above the bot's head — billboarded each frame to face the camera
   const hpBar = new THREE.Group();
@@ -1100,6 +1299,7 @@ function createBot(spawnX, spawnZ, conf) {
     ),
     wanderTimer: 1 + Math.random() * 2,
     alive: true,
+    isBoss,
   };
 }
 
@@ -1134,18 +1334,34 @@ function clearBots() {
 
 // Decide whether to schedule a replacement bot after one dies.
 // Cap concurrent bots at the difficulty's `count`, and never overshoot the kill quota.
+// When the player is one kill away from victory, the next spawn is the BOSS
+// (instead of a regular bot) — only happens in bots/co-op mode, not PvP.
 function scheduleRespawn() {
-  if (!game.alive) return;
+  if (!game.alive || game.mode === 'pvp') return;
   const conf = DIFFICULTIES[game.difficulty];
   const aliveCount = bots.filter(b => b.alive).length;
   const inFlight = aliveCount + game.pendingSpawns;
+
+  // Final kill is the BOSS — spawn exactly once, after all regulars are dead
+  if (game.kills >= game.killTarget - 1) {
+    if (game.bossSpawned || aliveCount > 0) return; // wait until arena is clear
+    game.bossSpawned = true;
+    game.pendingSpawns++;
+    setTimeout(() => {
+      game.pendingSpawns--;
+      if (!game.alive) return;
+      spawnOneBot(bossConfFor(game.difficulty));
+    }, 2200);
+    return;
+  }
+
   if (inFlight >= conf.count) return;
-  if (game.kills + inFlight >= game.killTarget) return;
+  if (game.kills + inFlight >= game.killTarget - 1) return; // leave room for the BOSS
   game.pendingSpawns++;
   setTimeout(() => {
     game.pendingSpawns--;
     if (!game.alive) return;
-    if (game.kills + bots.filter(b => b.alive).length >= game.killTarget) return;
+    if (game.kills + bots.filter(b => b.alive).length >= game.killTarget - 1) return;
     spawnOneBot(DIFFICULTIES[game.difficulty]);
   }, 1500);
 }
@@ -1363,7 +1579,15 @@ function fireRanged(w) {
     if (!b.alive) continue;
     for (const p of b.parts) { botParts.push(p); partToBot.set(p, b); }
   }
-  const targets = [...wallMeshes, ...botParts];
+  // In PvP mode, remote players' bodies/heads are also valid hit targets
+  const playerParts = [];
+  if (game.mode === 'pvp') {
+    for (const av of remotePlayers.values()) {
+      if (av.body) playerParts.push(av.body);
+      if (av.head) playerParts.push(av.head);
+    }
+  }
+  const targets = [...wallMeshes, ...botParts, ...playerParts];
 
   const pellets = w.conf.pellets ?? 1;
   const spread = w.conf.spread ?? 0;
@@ -1379,6 +1603,17 @@ function fireRanged(w) {
     if (bot) {
       const isHead = hit.object === bot.parts[1];
       damageBot(bot, w.conf.damage * (isHead ? w.conf.headshotMult : 1));
+    } else if (hit.object.userData && hit.object.userData.peerId) {
+      // We hit another player — tell them (and host relay the hit). The
+      // target's client applies the damage on its own HP.
+      const targetId = hit.object.userData.peerId;
+      const isHead = !!hit.object.userData.isHead;
+      const dmg = w.conf.damage * (isHead ? (w.conf.headshotMult ?? 1) : 1);
+      const msg = { type: 'pvp-hit', targetId, amount: dmg };
+      if (net.isHost()) net.sendTo(targetId, msg);
+      else net.sendToHost(msg);
+      // Visual feedback for the shooter — small spark on the avatar
+      spawnHitSparks(hit.point, hit.face.normal);
     } else {
       addBulletHole(hit);
     }
@@ -2320,6 +2555,9 @@ console.log('FPS Stage 4 ready — login or play as guest.');
 
 // ─── Multiplayer (PeerJS) ────────────────────────────────────────────────
 const PLAYER_COLORS = ['#ff6b35', '#4ac1ff', '#b46cff', '#52d97e'];
+// Tracks the host's currently selected room mode (read by startGame). Solo
+// players use the default 'bots'.
+let currentHostMode = 'bots';
 // `remotePlayers` map (peerId → avatar) was forward-declared above so the
 // animation loop could safely reference it before this block initialises.
 
@@ -2374,6 +2612,13 @@ overlay.querySelectorAll('.mp-tab').forEach(tab => {
     overlay.querySelectorAll('.mp-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     overlay.querySelectorAll('.mp-panel').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== tab.dataset.mp));
+  });
+});
+
+// Host mode radio buttons
+document.querySelectorAll('input[name="hostMode"]').forEach(input => {
+  input.addEventListener('change', () => {
+    if (input.checked) currentHostMode = input.value;
   });
 });
 
@@ -2515,7 +2760,7 @@ function createNameLabel(name, color) {
   return sprite;
 }
 
-function createRemoteAvatar(profile) {
+function createRemoteAvatar(profile, peerId) {
   const group = new THREE.Group();
   const baseColor = new THREE.Color(profile.color || '#ffd54a');
   const accentColor = baseColor.clone().multiplyScalar(0.6);
@@ -2525,6 +2770,7 @@ function createRemoteAvatar(profile) {
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.6), bodyMat);
   body.position.y = 1.0; body.castShadow = true;
+  body.userData.peerId = peerId; body.userData.isHead = false;
   const belt = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.18, 0.7), accentMat);
   belt.position.y = 0.5;
   const legL = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.55, 0.34), accentMat); legL.position.set(-0.22, 0.27, 0); legL.castShadow = true;
@@ -2533,6 +2779,7 @@ function createRemoteAvatar(profile) {
   const armR = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.85, 0.32), bodyMat); armR.position.set( 0.6, 1.0, 0); armR.castShadow = true;
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.8, 0.85), headMat);
   head.position.y = 2.0; head.castShadow = true;
+  head.userData.peerId = peerId; head.userData.isHead = true;
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
   const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.04), eyeMat); eyeL.position.set(-0.18, 2.07, -0.43);
   const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.04), eyeMat); eyeR.position.set( 0.18, 2.07, -0.43);
@@ -2545,17 +2792,17 @@ function createRemoteAvatar(profile) {
   group.add(label);
 
   return {
-    group, label,
+    group, label, body, head,
     targetPos: new THREE.Vector3(0, 0, 0),
     targetRotY: 0,
-    profile,
+    profile, peerId,
   };
 }
 
 function ensureRemoteAvatar(peerId) {
   if (remotePlayers.has(peerId)) return remotePlayers.get(peerId);
   const profile = net.getPeerProfile(peerId) || { name: 'שחקן', color: '#ffd54a' };
-  const av = createRemoteAvatar(profile);
+  const av = createRemoteAvatar(profile, peerId);
   scene.add(av.group);
   remotePlayers.set(peerId, av);
   return av;
@@ -2649,7 +2896,17 @@ net.addEventListener('message', e => {
     case 'start-game': {
       if (net.isClient()) {
         waitingForHostEl.classList.add('hidden');
-        startGame(data.difficulty, data.killTarget);
+        startGame(data.difficulty, data.killTarget, data.mode);
+      }
+      break;
+    }
+    case 'pvp-hit': {
+      // Another player reported hitting us. Apply the damage locally. We
+      // trust the sender for v1 — no anti-cheat (this is a friend-game).
+      damagePlayer(Math.max(1, Math.min(50, data.amount || 0)));
+      // Host relays so the rest of the room can also count the hit later
+      if (net.isHost() && data.targetId && data.targetId !== net.myId) {
+        net.sendTo(data.targetId, { type: 'pvp-hit', from, amount: data.amount });
       }
       break;
     }
@@ -2753,8 +3010,9 @@ function tickTouchInput() {
   keys.s = fwd < -0.2;
   keys.a = right < -0.2;
   keys.d = right >  0.2;
-  const stickMag = Math.hypot(touchState.moveX, touchState.moveY);
-  keys.shift = touchState.sprinting || stickMag > 0.85;
+  // Sprint is intentional only — held via the ⚡ button. Auto-engaging on a
+  // joystick push past 0.85 felt like the stick was always sprinting.
+  keys.shift = touchState.sprinting;
 
   // Look — manually rotate the camera. YXZ Euler keeps pitch/yaw decoupled.
   if (touchState.lookDX !== 0 || touchState.lookDY !== 0) {
