@@ -12,50 +12,58 @@ import { SHOP_ITEMS, SHOP_ORDER, isOwned } from './shop.js';
 
 // ─── Scene, camera, renderer ──────────────────────────────────────────────
 const scene = new THREE.Scene();
-const SKY_TOP = new THREE.Color(0x6cb9ff);    // deep blue overhead
-const SKY_HORIZON = new THREE.Color(0xffd6a0); // peach near horizon (Fortnite-ish)
-scene.background = SKY_HORIZON.clone();
-// Fog pushes back so players can actually take in the bigger map
-scene.fog = new THREE.Fog(0xffe6c7, 120, 380);
+// Minecraft sky is a single bright sky-blue, with fog tinted to match so
+// the world fades cleanly into the horizon. No gradient, no peach.
+const SKY_COLOR = new THREE.Color(0x88c1ff);
+const SKY_TOP = SKY_COLOR;
+const SKY_HORIZON = SKY_COLOR;
+scene.background = SKY_COLOR.clone();
+scene.fog = new THREE.Fog(0x88c1ff, 120, 380);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200);
 camera.position.set(0, 1.7, 0); // eye height ~1.7m
 
+// Minecraft-style: hard pixel edges, no tone curves, unsoftened shadows.
+// AA stays on so geometry edges between blocks don't shimmer, but textures
+// are nearest-filtered (set elsewhere) so they read as pixel art.
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;            // crisper than PCFSoft
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMapping = THREE.NoToneMapping;              // flat, untinted output
+renderer.toneMappingExposure = 1.0;
 document.getElementById('app').appendChild(renderer.domElement);
 
-// Stylized sky dome with vertical gradient (no shaders — vertex colors are simpler)
+// Minecraft-style sky: solid sky-blue background + a square white "sun"
+// quad. No gradient sphere; the scene.background colour does all the work.
 function buildSkyDome() {
-  const geo = new THREE.SphereGeometry(900, 32, 16);
-  const positions = geo.attributes.position;
-  const colors = new Float32Array(positions.count * 3);
-  const top = SKY_TOP, mid = new THREE.Color(0xc8e9ff), low = SKY_HORIZON;
-  for (let i = 0; i < positions.count; i++) {
-    const y = positions.getY(i);
-    const t = THREE.MathUtils.clamp((y + 80) / 320, 0, 1); // 0 at horizon, 1 at top
-    let c;
-    if (t > 0.5) c = mid.clone().lerp(top, (t - 0.5) * 2);
-    else         c = low.clone().lerp(mid, t * 2);
-    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+  // Square pixel-art sun (a single white quad facing the camera)
+  const sunSize = 60;
+  const sunGeo = new THREE.PlaneGeometry(sunSize, sunSize);
+  const sunMat = new THREE.MeshBasicMaterial({ color: 0xfff4c4, fog: false, depthWrite: false });
+  const sun = new THREE.Mesh(sunGeo, sunMat);
+  sun.position.set(280, 420, -420);
+  sun.lookAt(0, 0, 0);
+  scene.add(sun);
+  // A few drifting cloud BLOCKS at high altitude — pure Minecraft style
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, fog: false });
+  for (let i = 0; i < 12; i++) {
+    const cloud = new THREE.Group();
+    const cubes = 3 + Math.floor(Math.random() * 4);
+    for (let j = 0; j < cubes; j++) {
+      const cube = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 8), cloudMat);
+      cube.position.set(j * 8, 0, Math.floor(Math.random() * 3 - 1) * 8);
+      cloud.add(cube);
+    }
+    cloud.position.set(
+      (Math.random() - 0.5) * 700,
+      150 + Math.random() * 40,
+      (Math.random() - 0.5) * 700
+    );
+    scene.add(cloud);
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
-  const sky = new THREE.Mesh(geo, mat);
-  scene.add(sky);
-  // Visible sun (just a glowy disc, not the actual light source)
-  const sunSphere = new THREE.Mesh(
-    new THREE.SphereGeometry(28, 24, 24),
-    new THREE.MeshBasicMaterial({ color: 0xfff4c4, fog: false, depthWrite: false })
-  );
-  sunSphere.position.set(280, 420, -420);
-  scene.add(sunSphere);
 }
 buildSkyDome();
 
@@ -65,9 +73,11 @@ const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.55,  // strength
-  0.45,  // radius
-  0.82,  // threshold (only the brightest bits bloom)
+  // Vanilla Minecraft has zero bloom — but a touch makes muzzle flashes,
+  // explosions, and the lightsaber blade glow without softening the world.
+  0.18,  // strength (was 0.55)
+  0.30,  // radius   (was 0.45)
+  0.92,  // threshold — only the very brightest pixels bloom
 );
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -123,123 +133,214 @@ const _menuEls = {
   admin:    document.getElementById('adminPanel'),
 };
 
-// ─── Procedural textures ──────────────────────────────────────────────────
-// Generated in canvas — no external assets needed.
-function makeTextureFromCanvas(canvas, repeat = 1) {
+// ─── Procedural textures (Minecraft-style: 16×16 pixel art, no filtering) ─
+// All textures are drawn into a 16×16 canvas and bound with NearestFilter
+// + no mipmaps so they stay crisp at any distance/size — the trademark
+// blocky look. Anisotropy disabled for the same reason.
+function makePixelTexture(canvas, repeat = 1) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(repeat, repeat);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.anisotropy = 1;
   return tex;
 }
 
-function makeGrassTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
+// Tiny seedable RNG so each texture is reproducible regardless of when it's drawn
+function makeTexRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function pixelCanvas(seed, draw) {
+  const c = document.createElement('canvas'); c.width = c.height = 16;
   const x = c.getContext('2d');
-  // Base
-  x.fillStyle = '#4f7a35'; x.fillRect(0, 0, 256, 256);
-  // Mottled darker patches
-  for (let i = 0; i < 80; i++) {
-    x.fillStyle = `rgba(40,80,30,${0.15 + Math.random() * 0.35})`;
-    x.beginPath();
-    x.arc(Math.random() * 256, Math.random() * 256, 8 + Math.random() * 18, 0, Math.PI * 2);
-    x.fill();
-  }
-  // Tufts of brighter grass
-  for (let i = 0; i < 1500; i++) {
-    const px = Math.random() * 256, py = Math.random() * 256;
-    const tone = Math.random();
-    x.fillStyle = tone > 0.6
-      ? `rgba(150, 200, 110, ${0.4 + Math.random() * 0.4})`
-      : tone > 0.3
-        ? `rgba(95, 145, 60, ${0.5 + Math.random() * 0.4})`
-        : `rgba(60, 95, 35, ${0.5 + Math.random() * 0.4})`;
-    x.fillRect(px, py, 1, 1 + Math.random() * 2);
-  }
-  // Subtle yellow specks (dry grass)
-  for (let i = 0; i < 80; i++) {
-    x.fillStyle = `rgba(200, 175, 90, ${0.5})`;
-    x.fillRect(Math.random() * 256, Math.random() * 256, 1, 2);
-  }
+  x.imageSmoothingEnabled = false;
+  draw(x, makeTexRng(seed));
   return c;
 }
 
-function makeWoodTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const x = c.getContext('2d');
-  x.fillStyle = '#6b4226'; x.fillRect(0, 0, 256, 256);
-  // Grain stripes
-  for (let i = 0; i < 256; i += 1) {
-    const dark = 30 + Math.random() * 30;
-    x.fillStyle = `rgba(0,0,0,${(Math.sin(i * 0.18) * 0.5 + 0.5) * 0.25 + Math.random() * 0.05})`;
-    x.fillRect(0, i, 256, 1);
-  }
-  // Plank gaps every ~50px
-  x.fillStyle = '#2c1a0e';
-  for (let py = 0; py < 256; py += 50 + Math.floor(Math.random() * 14)) x.fillRect(0, py, 256, 2);
-  // Knots
-  for (let i = 0; i < 5; i++) {
-    const px = Math.random() * 256, py = Math.random() * 256;
-    const grad = x.createRadialGradient(px, py, 1, px, py, 10);
-    grad.addColorStop(0, 'rgba(20,10,5,0.9)');
-    grad.addColorStop(1, 'rgba(20,10,5,0)');
-    x.fillStyle = grad;
-    x.beginPath(); x.arc(px, py, 10, 0, Math.PI * 2); x.fill();
-  }
-  return c;
-}
-
-function makeStoneTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const x = c.getContext('2d');
-  x.fillStyle = '#7a8090'; x.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 600; i++) {
-    const r = 50 + Math.random() * 80;
-    x.fillStyle = `rgba(${r},${r + 5},${r + 10},${0.4 + Math.random() * 0.5})`;
-    x.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 3, 1 + Math.random() * 3);
-  }
-  // Cracks
-  x.strokeStyle = 'rgba(20,20,30,0.4)'; x.lineWidth = 1;
-  for (let i = 0; i < 8; i++) {
-    x.beginPath();
-    let cx = Math.random() * 256, cy = Math.random() * 256;
-    x.moveTo(cx, cy);
-    for (let s = 0; s < 6; s++) {
-      cx += (Math.random() - 0.5) * 40;
-      cy += (Math.random() - 0.5) * 40;
-      x.lineTo(cx, cy);
+// Grass top — bright green base, 4 darker speckles, a couple highlights
+function makeGrassTopTex() {
+  return pixelCanvas(101, (x, rng) => {
+    x.fillStyle = '#5fa845'; x.fillRect(0, 0, 16, 16);
+    const palette = ['#4a8e34', '#6fb84e', '#80c95a', '#3e7826', '#5fa845', '#5fa845'];
+    for (let i = 0; i < 110; i++) {
+      const px = Math.floor(rng() * 16), py = Math.floor(rng() * 16);
+      x.fillStyle = palette[Math.floor(rng() * palette.length)];
+      x.fillRect(px, py, 1, 1);
     }
-    x.stroke();
-  }
-  return c;
+  });
 }
 
-function makeWallTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const x = c.getContext('2d');
-  x.fillStyle = '#5a3d22'; x.fillRect(0, 0, 256, 256);
-  // Vertical plank lines
-  x.fillStyle = '#2c1a0e';
-  for (let px = 0; px < 256; px += 32) x.fillRect(px, 0, 2, 256);
-  // Wood grain noise per plank
-  for (let i = 0; i < 4000; i++) {
-    const tone = 30 + Math.random() * 30;
-    x.fillStyle = `rgba(0,0,0,${Math.random() * 0.18})`;
-    x.fillRect(Math.random() * 256, Math.random() * 256, 1, 2);
-  }
-  // Highlight strokes
-  for (let i = 0; i < 200; i++) {
-    x.fillStyle = `rgba(180,140,90,${0.15 + Math.random() * 0.2})`;
-    x.fillRect(Math.random() * 256, Math.random() * 256, 1, 3 + Math.random() * 8);
-  }
-  return c;
+// Grass side — top 4px is grass-edge, bottom 12px is dirt
+function makeGrassSideTex() {
+  return pixelCanvas(102, (x, rng) => {
+    // Dirt body
+    x.fillStyle = '#866043'; x.fillRect(0, 0, 16, 16);
+    for (let i = 0; i < 140; i++) {
+      const px = Math.floor(rng() * 16), py = 4 + Math.floor(rng() * 12);
+      x.fillStyle = ['#6f4d33', '#9a7150', '#5e4128', '#866043'][Math.floor(rng() * 4)];
+      x.fillRect(px, py, 1, 1);
+    }
+    // Grass overhang on top — irregular drip pattern
+    for (let px = 0; px < 16; px++) {
+      const drop = Math.floor(rng() * 3); // 0-2 px of grass below the strip
+      x.fillStyle = '#5fa845';
+      x.fillRect(px, 0, 1, 3 + drop);
+      // Speckle the grass strip
+      if (rng() > 0.5) { x.fillStyle = '#4a8e34'; x.fillRect(px, Math.floor(rng() * 3), 1, 1); }
+    }
+  });
 }
 
-const TEX_GRASS = makeTextureFromCanvas(makeGrassTexture(), 25);
-const TEX_WOOD  = makeTextureFromCanvas(makeWoodTexture(),  1);
-const TEX_STONE = makeTextureFromCanvas(makeStoneTexture(), 1);
-const TEX_WALL  = makeTextureFromCanvas(makeWallTexture(),  4);
+function makeDirtTex() {
+  return pixelCanvas(103, (x, rng) => {
+    x.fillStyle = '#866043'; x.fillRect(0, 0, 16, 16);
+    const pal = ['#6f4d33', '#9a7150', '#5e4128', '#7a5638', '#866043'];
+    for (let i = 0; i < 140; i++) {
+      const px = Math.floor(rng() * 16), py = Math.floor(rng() * 16);
+      x.fillStyle = pal[Math.floor(rng() * pal.length)];
+      x.fillRect(px, py, 1, 1);
+    }
+  });
+}
+
+// Oak log — vertical bark stripes
+function makeLogSideTex() {
+  return pixelCanvas(104, (x, rng) => {
+    x.fillStyle = '#5d4423'; x.fillRect(0, 0, 16, 16);
+    // Vertical grain stripes
+    for (let px = 0; px < 16; px++) {
+      x.fillStyle = px % 4 === 0 ? '#3a2a14' : (px % 4 === 2 ? '#6e5230' : '#5d4423');
+      x.fillRect(px, 0, 1, 16);
+    }
+    // Pixel knots
+    for (let i = 0; i < 8; i++) {
+      x.fillStyle = '#2c1f10';
+      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+    }
+  });
+}
+function makeLogTopTex() {
+  return pixelCanvas(105, (x, rng) => {
+    x.fillStyle = '#a17a48'; x.fillRect(0, 0, 16, 16);
+    // Concentric ring rough pattern
+    const cx = 8, cy = 8;
+    for (let py = 0; py < 16; py++) {
+      for (let px = 0; px < 16; px++) {
+        const d = Math.round(Math.hypot(px - cx, py - cy));
+        if (d % 3 === 0) { x.fillStyle = '#7a5832'; x.fillRect(px, py, 1, 1); }
+      }
+    }
+  });
+}
+
+// Wood planks — horizontal slats with vertical kerf cuts
+function makePlanksTex() {
+  return pixelCanvas(106, (x, rng) => {
+    x.fillStyle = '#a07246'; x.fillRect(0, 0, 16, 16);
+    // 4 horizontal plank rows, 4px tall each
+    for (let row = 0; row < 4; row++) {
+      const y = row * 4;
+      const tone = ['#a07246', '#8e6438', '#a87a4e', '#956a3c'][row];
+      x.fillStyle = tone; x.fillRect(0, y, 16, 4);
+      // Plank divider line
+      x.fillStyle = '#5a3a1f'; x.fillRect(0, y, 16, 1);
+      // Kerf cuts at staggered x positions
+      const kerfX = (row * 5) % 16;
+      x.fillStyle = '#5a3a1f';
+      x.fillRect(kerfX, y, 1, 4);
+    }
+    // Pixel grain noise
+    for (let i = 0; i < 18; i++) {
+      x.fillStyle = '#5a3a1f';
+      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+    }
+  });
+}
+
+// Leaves — dense dark green with darker stipple
+function makeLeavesTex() {
+  return pixelCanvas(107, (x, rng) => {
+    x.fillStyle = '#3a8b2a'; x.fillRect(0, 0, 16, 16);
+    const pal = ['#2c6b1f', '#4ea235', '#256818', '#3a8b2a', '#3a8b2a'];
+    for (let i = 0; i < 130; i++) {
+      x.fillStyle = pal[Math.floor(rng() * pal.length)];
+      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+    }
+  });
+}
+
+// Stone — gray with small darker pixels
+function makeStoneTex() {
+  return pixelCanvas(108, (x, rng) => {
+    x.fillStyle = '#7a7a7e'; x.fillRect(0, 0, 16, 16);
+    const pal = ['#666669', '#8a8a8e', '#5d5d61', '#9a9a9e', '#7a7a7e'];
+    for (let i = 0; i < 140; i++) {
+      x.fillStyle = pal[Math.floor(rng() * pal.length)];
+      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+    }
+  });
+}
+
+// Cobblestone — chunky stone blobs separated by darker mortar
+function makeCobblestoneTex() {
+  return pixelCanvas(109, (x, rng) => {
+    x.fillStyle = '#3a3a3e'; x.fillRect(0, 0, 16, 16); // mortar
+    const blobs = [
+      [0, 0, 6, 5], [7, 0, 5, 4], [13, 0, 3, 5],
+      [0, 6, 4, 5], [5, 5, 6, 6], [12, 6, 4, 5],
+      [0, 12, 7, 4], [8, 12, 4, 4], [13, 12, 3, 4],
+    ];
+    for (const [bx, by, bw, bh] of blobs) {
+      x.fillStyle = '#7a7a7e'; x.fillRect(bx, by, bw, bh);
+      // Stipple
+      for (let i = 0; i < 4; i++) {
+        x.fillStyle = ['#666669', '#8a8a8e', '#5d5d61'][Math.floor(rng() * 3)];
+        x.fillRect(bx + Math.floor(rng() * bw), by + Math.floor(rng() * bh), 1, 1);
+      }
+    }
+  });
+}
+
+// Fence-plank wall — vertical planks
+function makeWallPlanksTex() {
+  return pixelCanvas(110, (x, rng) => {
+    x.fillStyle = '#7a5638'; x.fillRect(0, 0, 16, 16);
+    for (let px = 0; px < 16; px++) {
+      x.fillStyle = px % 4 === 0 ? '#3a2818' : (px % 4 === 2 ? '#9a7150' : '#7a5638');
+      x.fillRect(px, 0, 1, 16);
+    }
+    for (let i = 0; i < 18; i++) {
+      x.fillStyle = '#3a2818';
+      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+    }
+  });
+}
+
+const TEX_GRASS_TOP   = makePixelTexture(makeGrassTopTex(), 1);
+const TEX_GRASS_SIDE  = makePixelTexture(makeGrassSideTex(), 1);
+const TEX_DIRT        = makePixelTexture(makeDirtTex(), 1);
+const TEX_LOG_SIDE    = makePixelTexture(makeLogSideTex(), 1);
+const TEX_LOG_TOP     = makePixelTexture(makeLogTopTex(), 1);
+const TEX_PLANKS      = makePixelTexture(makePlanksTex(), 1);
+const TEX_LEAVES      = makePixelTexture(makeLeavesTex(), 1);
+const TEX_STONE       = makePixelTexture(makeStoneTex(), 1);
+const TEX_COBBLE      = makePixelTexture(makeCobblestoneTex(), 1);
+const TEX_WALL        = makePixelTexture(makeWallPlanksTex(), 1);
+
+// Aliases for legacy code paths (textures referenced by name elsewhere)
+const TEX_GRASS = TEX_GRASS_TOP;
+const TEX_WOOD  = TEX_PLANKS;
 
 // ─── Lights (cartoon-bright: hemisphere ambient + warm sun) ──────────────
 const hemi = new THREE.HemisphereLight(0xb8e0ff, 0x6f8a4a, 0.85);
@@ -327,84 +428,121 @@ function tryPlace(x, z, r) {
   return true;
 }
 
-// Trees — cone canopy + cylinder trunk
+// ─── Block-style tree: log column + leaf cube cluster (Minecraft style) ──
+// Uses 6 face materials per log so the top/bottom show ring texture while
+// the sides show bark grain. Leaves are per-cube to randomise minor offsets.
+const _logFaceMats = [
+  new THREE.MeshLambertMaterial({ map: TEX_LOG_SIDE }),
+  new THREE.MeshLambertMaterial({ map: TEX_LOG_SIDE }),
+  new THREE.MeshLambertMaterial({ map: TEX_LOG_TOP }),
+  new THREE.MeshLambertMaterial({ map: TEX_LOG_TOP }),
+  new THREE.MeshLambertMaterial({ map: TEX_LOG_SIDE }),
+  new THREE.MeshLambertMaterial({ map: TEX_LOG_SIDE }),
+];
+const _leafMat = new THREE.MeshLambertMaterial({ map: TEX_LEAVES });
+const _stoneBlockMat = new THREE.MeshLambertMaterial({ map: TEX_STONE });
+const _cobbleBlockMat = new THREE.MeshLambertMaterial({ map: TEX_COBBLE });
+
 function makeTree(x, z, scale = 1) {
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.25 * scale, 0.32 * scale, 1.4 * scale, 8),
-    new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.9 })
-  );
-  trunk.position.set(x, 0.7 * scale, z);
-  trunk.castShadow = true; trunk.receiveShadow = true;
-  scene.add(trunk); addArenaMesh(trunk);
-
-  const canopyColor = [0x4caf50, 0x66bb6a, 0x2e8b57, 0x388e3c][Math.floor(Math.random() * 4)];
-  const canopyLow = new THREE.Mesh(
-    new THREE.ConeGeometry(1.2 * scale, 1.6 * scale, 8),
-    new THREE.MeshStandardMaterial({ color: canopyColor, roughness: 0.85 })
-  );
-  canopyLow.position.set(x, 1.6 * scale, z);
-  canopyLow.castShadow = true;
-  const canopyTop = new THREE.Mesh(
-    new THREE.ConeGeometry(0.85 * scale, 1.3 * scale, 8),
-    new THREE.MeshStandardMaterial({ color: canopyColor, roughness: 0.85 })
-  );
-  canopyTop.position.set(x, 2.5 * scale, z);
-  canopyTop.castShadow = true;
-  scene.add(canopyLow, canopyTop);
-  addArenaMesh(canopyLow); addArenaMesh(canopyTop);
-
-  const box = new THREE.Box3().setFromObject(trunk);
-  box.expandByScalar(0.15);
-  colliders.push({ mesh: trunk, box });
+  // Trunk = stack of 1×1×1 log blocks (height varies with scale: 3-5 blocks)
+  const trunkHeight = Math.round(3 + scale * 1.5);  // ~3 short, ~5 tall
+  let trunkBase = null;
+  for (let h = 0; h < trunkHeight; h++) {
+    const log = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _logFaceMats);
+    log.position.set(x, 0.5 + h, z);
+    log.castShadow = true; log.receiveShadow = true;
+    scene.add(log); addArenaMesh(log);
+    if (h === 0) trunkBase = log;
+  }
+  // Canopy = a 5×3×5 leaf cluster, irregular (corners often missing)
+  const canopyY = trunkHeight - 1;          // overlap top log so it's "inside" canopy
+  for (let dy = 0; dy < 3; dy++) {
+    const radius = (dy === 0 || dy === 2) ? 1 : 2; // narrower top / bottom
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        // Skip corners on the widest layer for a more organic shape
+        if (dy === 1 && Math.abs(dx) === 2 && Math.abs(dz) === 2 && Math.random() > 0.4) continue;
+        // Don't place a leaf where the trunk already is (only at trunk height)
+        if (dx === 0 && dz === 0 && dy < 2) continue;
+        const leaf = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _leafMat);
+        leaf.position.set(x + dx, canopyY + dy + 0.5, z + dz);
+        leaf.castShadow = true; leaf.receiveShadow = true;
+        scene.add(leaf); addArenaMesh(leaf);
+      }
+    }
+  }
+  // Collider on the trunk only — players can walk through leaves like in MC
+  const box = new THREE.Box3().setFromObject(trunkBase);
+  box.max.y += trunkHeight - 1; // collider covers the full trunk column
+  box.expandByScalar(0.05);
+  colliders.push({ mesh: trunkBase, box });
 }
 
+// ─── Block-style rocks: small clusters of stone cubes ────────────────────
 function makeRock(x, z, scale = 1) {
-  const geo = new THREE.IcosahedronGeometry(0.9 * scale, 0);
-  const mat = new THREE.MeshStandardMaterial({ map: TEX_STONE, roughness: 1, metalness: 0 });
-  const rock = new THREE.Mesh(geo, mat);
-  rock.position.set(x, 0.55 * scale, z);
-  rock.rotation.set(Math.random(), Math.random(), Math.random());
-  rock.castShadow = true; rock.receiveShadow = true;
-  scene.add(rock); addArenaMesh(rock);
-  const box = new THREE.Box3().setFromObject(rock);
-  colliders.push({ mesh: rock, box });
+  // Number of cubes scales with `scale` so big landmark rocks feel chunky
+  const cubes = Math.max(1, Math.round(1 + scale * 1.5));
+  let rep = null;
+  for (let i = 0; i < cubes; i++) {
+    const sz = 0.7 + Math.random() * 0.6 + scale * 0.3;
+    const ox = (Math.random() - 0.5) * 1.2 * scale;
+    const oz = (Math.random() - 0.5) * 1.2 * scale;
+    const oy = i === 0 ? sz / 2 : 0.2 + Math.random() * sz * 0.5;
+    const useCobble = Math.random() > 0.5;
+    const stone = new THREE.Mesh(
+      new THREE.BoxGeometry(sz, sz, sz),
+      useCobble ? _cobbleBlockMat : _stoneBlockMat
+    );
+    stone.position.set(x + ox, oy, z + oz);
+    stone.castShadow = true; stone.receiveShadow = true;
+    scene.add(stone); addArenaMesh(stone);
+    if (i === 0) rep = stone;
+  }
+  // Single AABB collider around the centre cube — good enough for a rock cluster
+  if (rep) {
+    const box = new THREE.Box3().setFromObject(rep);
+    box.expandByScalar(0.4 * scale);
+    colliders.push({ mesh: rep, box });
+  }
 }
 
+// ─── Block-style crate: simple oak-plank cube ───────────────────────────
+const _planksBlockMat = new THREE.MeshLambertMaterial({ map: TEX_PLANKS });
 function makeCrate(x, z, size = 1) {
-  const wood = new THREE.MeshStandardMaterial({ map: TEX_WOOD, roughness: 0.85 });
-  const crate = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), wood);
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), _planksBlockMat);
   crate.position.set(x, size / 2, z);
   crate.castShadow = true; crate.receiveShadow = true;
   scene.add(crate); addArenaMesh(crate);
-  const plankMat = new THREE.MeshStandardMaterial({ color: 0x6e4a26 });
-  const stripeY = size + 0.001;
-  for (let s = -1; s <= 1; s++) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(size + 0.02, 0.02, 0.1), plankMat);
-    stripe.position.set(x, stripeY, z + s * (size / 3));
-    scene.add(stripe); addArenaMesh(stripe);
-  }
   const box = new THREE.Box3().setFromObject(crate);
   colliders.push({ mesh: crate, box });
 }
 
+// ─── Block-style hut: plank walls + stepped pyramid roof ─────────────────
 function makeHut(x, z) {
-  const roofColor = [0xc23b3b, 0x4a73c2, 0x3aa18a, 0xc28a3a][Math.floor(Math.random() * 4)];
-  const w = 3.5, d = 3.2, h = 2.5;
+  const roofPalette = [0xc23b3b, 0x4a73c2, 0x3aa18a, 0xc28a3a];
+  const roofColor = roofPalette[Math.floor(Math.random() * 4)];
+  const roofMat = new THREE.MeshLambertMaterial({ color: roofColor });
+  // Walls: 3 wide × 3 deep × 3 tall, hollow inside (placeholder — solid for collision)
+  const wallSize = 3;
   const wall = new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color: 0xe5d3b0, roughness: 0.9 })
+    new THREE.BoxGeometry(wallSize, wallSize, wallSize),
+    _planksBlockMat
   );
-  wall.position.set(x, h / 2, z);
+  wall.position.set(x, wallSize / 2, z);
   wall.castShadow = true; wall.receiveShadow = true;
   scene.add(wall); addArenaMesh(wall);
-  const roof = new THREE.Mesh(
-    new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.4, 4),
-    new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.7 })
-  );
-  roof.rotation.y = Math.PI / 4;
-  roof.position.set(x, h + 0.7, z);
-  roof.castShadow = true;
-  scene.add(roof); addArenaMesh(roof);
+  // Stepped pyramid roof: 3 layers, each smaller than the one below
+  const roofLayers = [
+    { size: 3.6, h: 0.6, y: wallSize + 0.3 },
+    { size: 2.6, h: 0.6, y: wallSize + 0.9 },
+    { size: 1.4, h: 0.6, y: wallSize + 1.5 },
+  ];
+  for (const r of roofLayers) {
+    const layer = new THREE.Mesh(new THREE.BoxGeometry(r.size, r.h, r.size), roofMat);
+    layer.position.set(x, r.y, z);
+    layer.castShadow = true;
+    scene.add(layer); addArenaMesh(layer);
+  }
   const box = new THREE.Box3().setFromObject(wall);
   colliders.push({ mesh: wall, box });
 }
@@ -524,11 +662,13 @@ function buildArena(size) {
   addBox(1, 4, ARENA * 2,  ARENA, 2, 0, shortSide);
   addBox(1, 4, ARENA * 2, -ARENA, 2, 0, shortSide);
 
-  // Density scales with arena area so the small map doesn't choke on 240 trees
+  // Density scales with arena area. Block-style trees are ~30 meshes each
+  // (trunk column + leaf cluster) so we halve the count to keep draw calls
+  // manageable. Frustum culling handles the rest at runtime.
   const isBig = size >= 100;
   const counts = isBig
-    ? { trees: 240, rocks: 140, crates: 80, huts: 18, lakes: 4, caves: 3, ruins: 4, landmarks: 8 }
-    : { trees: 24,  rocks: 14,  crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0 };
+    ? { trees: 130, rocks: 100, crates: 80, huts: 18, lakes: 4, caves: 3, ruins: 4, landmarks: 8 }
+    : { trees: 14,  rocks: 12,  crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0 };
 
   // Special structures FIRST — they're chunkier and reserve a larger area
   for (let i = 0; i < counts.lakes; i++) {
@@ -1573,13 +1713,35 @@ const BOT_DAMAGE_PER_HIT = 25;       // how much damage one player bullet does t
 const BOT_ATTACK_RANGE = 18;         // bot starts shooting within this distance
 const BOT_KEEP_DISTANCE = 6;         // bot stops getting closer than this
 
-// Cartoon-style bot: chunkier proportions, saturated palette, oversized head, simple feet.
+// Steve-style bot palettes (Minecraft mob colours). Body is the shirt,
+// accent is the trousers, head is skin tone, eyes are pupils.
 const BOT_PALETTES = [
-  { body: 0xff6b35, accent: 0xc94a1a, head: 0xfff0d8, eyes: 0x111111 }, // orange
-  { body: 0x4ac1ff, accent: 0x1c7eb8, head: 0xfff0d8, eyes: 0x111111 }, // blue
-  { body: 0xb46cff, accent: 0x7a3fc6, head: 0xfff0d8, eyes: 0x111111 }, // purple
-  { body: 0x52d97e, accent: 0x2c9c52, head: 0xfff0d8, eyes: 0x111111 }, // green
+  { body: 0x009faa, accent: 0x3e3eb0, head: 0xf2cbac, eyes: 0x3a2f7a }, // classic Steve cyan
+  { body: 0xe04444, accent: 0x2a2a2a, head: 0xf2cbac, eyes: 0x111111 }, // red bandit
+  { body: 0x6b3aa6, accent: 0x3e2862, head: 0xa57b54, eyes: 0x111111 }, // dark cloak
+  { body: 0xb8c25d, accent: 0x6f4226, head: 0xf2cbac, eyes: 0x111111 }, // farmer
 ];
+
+// Pixel face texture for bot heads — eyes + mouth, drawn on a 16×16
+// canvas so the look reads instantly as Minecraft.
+function makeBotFaceTex(skin, eyes) {
+  return makePixelTexture(pixelCanvas(200 + Math.floor(Math.random() * 1000), (x, rng) => {
+    // Skin base
+    x.fillStyle = skin; x.fillRect(0, 0, 16, 16);
+    // Slight pixel speckle for a hand-drawn feel
+    x.fillStyle = 'rgba(0,0,0,0.10)';
+    for (let i = 0; i < 12; i++) x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+    // Two eyes — 2×2 each
+    x.fillStyle = '#ffffff';
+    x.fillRect(3, 7, 3, 2);
+    x.fillRect(10, 7, 3, 2);
+    x.fillStyle = eyes;
+    x.fillRect(4, 7, 1, 2); x.fillRect(11, 7, 1, 2);
+    // Mouth — flat line with a small dimple
+    x.fillStyle = '#5a3a1f';
+    x.fillRect(6, 12, 5, 1);
+  }), 1);
+}
 
 // A vivid red palette reserved for BOSS bots so they're instantly recognisable
 const BOSS_PALETTE = { body: 0x8b0000, accent: 0xff2010, head: 0xfff0d8, eyes: 0xffe000 };
@@ -1590,52 +1752,67 @@ function createBot(spawnX, spawnZ, conf) {
   const palette = isBoss
     ? BOSS_PALETTE
     : BOT_PALETTES[Math.floor(Math.random() * BOT_PALETTES.length)];
-  const bodyMat   = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.6,
-    emissive: isBoss ? 0x440000 : 0x000000, emissiveIntensity: isBoss ? 0.3 : 0 });
-  const accentMat = new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.6 });
-  const headMat   = new THREE.MeshStandardMaterial({ color: palette.head, roughness: 0.65 });
+  // Steve uses flat (Lambert) shading + emissive accent on the boss
+  const bodyMat   = new THREE.MeshLambertMaterial({ color: palette.body,
+    emissive: isBoss ? 0x440000 : 0x000000, emissiveIntensity: isBoss ? 0.5 : 0 });
+  const accentMat = new THREE.MeshLambertMaterial({ color: palette.accent });
+  // Head face is a pixel texture — eyes + mouth drawn directly on the skin
+  const faceTex   = makeBotFaceTex(`#${palette.head.toString(16).padStart(6, '0')}`,
+                                   `#${palette.eyes.toString(16).padStart(6, '0')}`);
+  const headSkinMat = new THREE.MeshLambertMaterial({ color: palette.head });
+  const headFaceMat = new THREE.MeshLambertMaterial({ map: faceTex });
+  // Steve face is on the front (-Z): order is +X, -X, +Y, -Y, +Z, -Z
+  const headMats = [headSkinMat, headSkinMat, headSkinMat, headSkinMat, headSkinMat, headFaceMat];
 
-  // Torso — chunky rounded box
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.1, 0.65), bodyMat);
-  body.position.y = 1.0;
+  // Steve canonical proportions, scaled to a ~1.85m tall mob:
+  //   torso: 0.5 × 0.75 × 0.25,  arms / legs: 0.25 × 0.75 × 0.25,  head: 0.5 cube
+  // We multiply each by ~1.6 so collisions feel fair against the human player.
+  const S = 1.6;
+  const TORSO_W = 0.50 * S, TORSO_H = 0.75 * S, TORSO_D = 0.25 * S;
+  const LIMB    = 0.25 * S, LIMB_H  = 0.75 * S;
+  const HEAD    = 0.50 * S;
+  // Vertical layout (feet on y=0):
+  const LEG_Y    = LIMB_H / 2;                       // legs centred at half-height
+  const TORSO_Y  = LIMB_H + TORSO_H / 2;             // sits on top of legs
+  const HEAD_Y   = LIMB_H + TORSO_H + HEAD / 2;      // sits on top of torso
+  const ARM_Y    = LIMB_H + TORSO_H - LIMB_H / 2;    // shoulders at top of torso
+
+  // Torso
+  const body = new THREE.Mesh(new THREE.BoxGeometry(TORSO_W, TORSO_H, TORSO_D), bodyMat);
+  body.position.y = TORSO_Y;
   body.castShadow = true;
 
-  // Belt accent on torso (decorative)
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.18, 0.7), accentMat);
-  belt.position.y = 0.5;
-  group.add(belt);
+  // Legs — pivot at the hip
+  const legPivotL = new THREE.Group(); legPivotL.position.set(-LIMB / 2,  LIMB_H,       0); group.add(legPivotL);
+  const legPivotR = new THREE.Group(); legPivotR.position.set( LIMB / 2,  LIMB_H,       0); group.add(legPivotR);
+  const legGeo = new THREE.BoxGeometry(LIMB, LIMB_H, LIMB);
+  const legL = new THREE.Mesh(legGeo, accentMat); legL.position.y = -LIMB_H / 2; legL.castShadow = true; legPivotL.add(legL);
+  const legR = new THREE.Mesh(legGeo, accentMat); legR.position.y = -LIMB_H / 2; legR.castShadow = true; legPivotR.add(legR);
 
-  // Legs — pivot at the hip so we can swing them while walking
-  const legPivotL = new THREE.Group(); legPivotL.position.set(-0.22, 0.55, 0); group.add(legPivotL);
-  const legPivotR = new THREE.Group(); legPivotR.position.set( 0.22, 0.55, 0); group.add(legPivotR);
-  const legGeo = new THREE.BoxGeometry(0.32, 0.55, 0.34);
-  const legL = new THREE.Mesh(legGeo, accentMat); legL.position.y = -0.28; legL.castShadow = true; legPivotL.add(legL);
-  const legR = new THREE.Mesh(legGeo, accentMat); legR.position.y = -0.28; legR.castShadow = true; legPivotR.add(legR);
+  // Arms — pivot at the shoulder, hang straight down by default
+  const armPivotL = new THREE.Group(); armPivotL.position.set(-(TORSO_W / 2 + LIMB / 2), ARM_Y + LIMB_H / 2, 0); group.add(armPivotL);
+  const armPivotR = new THREE.Group(); armPivotR.position.set( (TORSO_W / 2 + LIMB / 2), ARM_Y + LIMB_H / 2, 0); group.add(armPivotR);
+  const armGeo = new THREE.BoxGeometry(LIMB, LIMB_H, LIMB);
+  const armL = new THREE.Mesh(armGeo, bodyMat); armL.position.y = -LIMB_H / 2; armL.castShadow = true; armPivotL.add(armL);
+  const armR = new THREE.Mesh(armGeo, bodyMat); armR.position.y = -LIMB_H / 2; armR.castShadow = true; armPivotR.add(armR);
 
-  // Arms — also pivoted at the shoulder for animation
-  const armPivotL = new THREE.Group(); armPivotL.position.set(-0.62, 1.42, 0); group.add(armPivotL);
-  const armPivotR = new THREE.Group(); armPivotR.position.set( 0.62, 1.42, 0); group.add(armPivotR);
-  const armGeo = new THREE.BoxGeometry(0.3, 0.85, 0.32);
-  const armL = new THREE.Mesh(armGeo, bodyMat); armL.position.y = -0.42; armL.castShadow = true; armPivotL.add(armL);
-  const armR = new THREE.Mesh(armGeo, bodyMat); armR.position.y = -0.42; armR.castShadow = true; armPivotR.add(armR);
-
-  // OVERSIZED head — Fortnite-ish cartoon proportion
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.8, 0.85), headMat);
-  head.position.y = 2.0;
+  // Head — canonical Steve cube with the pixel face on the front
+  const head = new THREE.Mesh(new THREE.BoxGeometry(HEAD, HEAD, HEAD), headMats);
+  head.position.y = HEAD_Y;
   head.castShadow = true;
 
-  // Eyes — flat black squares
-  const eyeMat = new THREE.MeshBasicMaterial({ color: palette.eyes });
-  const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.04), eyeMat);
-  const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.04), eyeMat);
-  eyeL.position.set(-0.18, 2.07, -0.43);
-  eyeR.position.set( 0.18, 2.07, -0.43);
+  // Hat layer — a slightly larger overlay (Minecraft mobs all have one)
+  const hatColor = isBoss ? 0xff2010 : (palette.body);
+  const hat = new THREE.Mesh(
+    new THREE.BoxGeometry(HEAD + 0.06, HEAD + 0.06, HEAD + 0.06),
+    new THREE.MeshLambertMaterial({ color: hatColor, transparent: true, opacity: 0.35 })
+  );
+  hat.position.y = HEAD_Y;
+  group.add(hat);
 
-  // Cap on top of the head (in body color)
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 0.95), bodyMat);
-  cap.position.y = 2.5;
-  cap.castShadow = true;
-  group.add(cap);
+  // Body parts list used by the existing aim / shoot pipeline. Eyes are
+  // drawn into the face texture so we no longer add separate eye meshes.
+  const eyeL = head, eyeR = head; // alias — kept for return shape compatibility
 
   // BOSS gets a noticeably larger silhouette + a glowing aura
   if (isBoss) {
@@ -1665,9 +1842,11 @@ function createBot(spawnX, spawnZ, conf) {
   hpBarBg.renderOrder = 999;
   hpBarFill.renderOrder = 1000;
   hpBar.add(hpBarBg, hpBarFill);
-  hpBar.position.y = 2.95;
+  // Steve mob is taller than the old cartoon bot — float the HP bar above
+  // the head + the hat overlay.
+  hpBar.position.y = 3.45;
 
-  group.add(body, head, eyeL, eyeR, hpBar);
+  group.add(body, head, hpBar);
   group.position.set(spawnX, 0, spawnZ);
   scene.add(group);
 
@@ -1675,6 +1854,7 @@ function createBot(spawnX, spawnZ, conf) {
     group,
     parts: [body, head], // parts that count as hittable
     legPivotL, legPivotR, armPivotL, armPivotR, head,
+    headRestY: HEAD_Y,
     walkPhase: Math.random() * Math.PI * 2,
     isMoving: false,
     deathTimer: 0,    // when > 0, bot is in falling-corpse animation
@@ -1806,8 +1986,9 @@ function updateBots(dt) {
     );
     const dist = _toPlayer.length();
 
-    // Line of sight from bot's head to player's eye
-    _from.set(bot.group.position.x, 2.0, bot.group.position.z);
+    // Line of sight from bot's head to player's eye (head sits at ~2.8m
+    // on the Steve-proportioned bot)
+    _from.set(bot.group.position.x, 2.8, bot.group.position.z);
     const sees = game.alive && dist < bot.sightRange && hasLineOfSight(_from, camera.position);
 
     if (sees) {
@@ -1866,14 +2047,14 @@ function updateBots(dt) {
       bot.legPivotR.rotation.x = -swing;
       bot.armPivotL.rotation.x = -swing * 0.8;
       bot.armPivotR.rotation.x =  swing * 0.8;
-      bot.head.position.y = 2.0 + Math.abs(Math.sin(bot.walkPhase * 2)) * 0.04;
+      bot.head.position.y = bot.headRestY + Math.abs(Math.sin(bot.walkPhase * 2)) * 0.04;
     } else {
       // Smoothly settle limbs to rest
       bot.legPivotL.rotation.x *= 0.85;
       bot.legPivotR.rotation.x *= 0.85;
       bot.armPivotL.rotation.x *= 0.85;
       bot.armPivotR.rotation.x *= 0.85;
-      bot.head.position.y = 2.0;
+      bot.head.position.y = bot.headRestY;
     }
 
     // Billboard the HP bar so it always faces the camera (in world space)
