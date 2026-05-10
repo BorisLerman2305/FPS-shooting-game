@@ -26,10 +26,35 @@ function loadCachedUser() {
   } catch { return null; }
 }
 
-function saveCachedUser(user) {
-  cachedUser = user;
-  if (user) localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
+function persistCache() {
+  if (cachedUser) localStorage.setItem(USER_CACHE_KEY, JSON.stringify(cachedUser));
   else localStorage.removeItem(USER_CACHE_KEY);
+}
+
+// Replace the cached user wholesale (login / register / first restore).
+// Anyone holding a reference to the OLD cachedUser will see stale data,
+// so callers should also re-read getCurrentUser() afterwards.
+function setCachedUser(user) {
+  cachedUser = user;
+  persistCache();
+}
+
+// MUTATE the cached user in place from a server response. Preserves the
+// object identity so external references (e.g. main.js's session.user)
+// stay in sync without needing a refresh round-trip.
+function mergeFromServer(serverUser) {
+  if (!serverUser) { setCachedUser(null); return; }
+  if (!cachedUser) { setCachedUser(serverUser); return; }
+  // Top-level scalars / flags
+  for (const k of Object.keys(serverUser)) {
+    if (k === 'stats' || k === 'loadout') continue;
+    cachedUser[k] = serverUser[k];
+  }
+  // Nested objects we care about — also merged in place
+  if (serverUser.stats)   Object.assign(cachedUser.stats   = cachedUser.stats   || {}, serverUser.stats);
+  if (serverUser.loadout) Object.assign(cachedUser.loadout = cachedUser.loadout || {}, serverUser.loadout);
+  if (serverUser.ownedItems) cachedUser.ownedItems = serverUser.ownedItems.slice();
+  persistCache();
 }
 
 function getToken() {
@@ -72,20 +97,20 @@ async function api(path, { method = 'GET', body, auth = false } = {}) {
 export async function register(username, password) {
   const data = await api('/api/auth/register', { method: 'POST', body: { username, password } });
   setToken(data.token);
-  saveCachedUser(data.user);
+  setCachedUser(data.user);  // first time → fresh reference is fine
   return data.user;
 }
 
 export async function login(username, password) {
   const data = await api('/api/auth/login', { method: 'POST', body: { username, password } });
   setToken(data.token);
-  saveCachedUser(data.user);
+  setCachedUser(data.user);
   return data.user;
 }
 
 export function logout() {
   setToken(null);
-  saveCachedUser(null);
+  setCachedUser(null);
 }
 
 // Synchronous read of the cached user. Call `tryRestoreSession()` on app boot
@@ -100,32 +125,36 @@ export async function tryRestoreSession() {
   if (!getToken()) return null;
   try {
     const data = await api('/api/auth/me', { auth: true });
-    saveCachedUser(data.user);
-    return data.user;
+    // Use merge — if the boot path runs after the app has already grabbed
+    // a reference to getCurrentUser(), we keep it in sync.
+    if (cachedUser) mergeFromServer(data.user);
+    else setCachedUser(data.user);
+    return cachedUser;
   } catch {
     setToken(null);
-    saveCachedUser(null);
+    setCachedUser(null);
     return null;
   }
 }
 
-// Fire-and-forget stat updater. Updates the local cache immediately so the UI
-// reflects the change, then sends to the server. If the server call fails we
-// keep the optimistic local update (it'll resync on next login).
+// Fire-and-forget stat updater. Optimistically bumps the cached value so
+// the HUD updates instantly; the server response is merged IN PLACE so
+// external references to getCurrentUser() stay live.
 export function bumpStat(key, by = 1) {
   if (!cachedUser) return;
   if (!cachedUser.stats) cachedUser.stats = {};
   cachedUser.stats[key] = (cachedUser.stats[key] || 0) + by;
-  saveCachedUser(cachedUser);
+  persistCache();
   api('/api/me/stats', { method: 'POST', body: { [key]: by }, auth: true })
-    .then(data => { if (data?.user) saveCachedUser(data.user); })
+    .then(data => { if (data?.user) mergeFromServer(data.user); })
     .catch(() => {});
 }
 
 export function setFavoriteWeapon(weaponId) {
   if (!cachedUser) return;
-  cachedUser.loadout = { ...(cachedUser.loadout || {}), favoriteWeapon: weaponId };
-  saveCachedUser(cachedUser);
+  cachedUser.loadout = cachedUser.loadout || {};
+  cachedUser.loadout.favoriteWeapon = weaponId;
+  persistCache();
   api('/api/me/loadout', { method: 'PATCH', body: { favoriteWeapon: weaponId }, auth: true })
     .catch(() => {});
 }
@@ -139,8 +168,9 @@ export async function listAllUsers() {
 // ─── Shop ────────────────────────────────────────────────────────────────
 export async function buyItem(itemId) {
   const data = await api('/api/me/buy', { method: 'POST', body: { itemId }, auth: true });
-  if (data && data.user) saveCachedUser(data.user);
-  return data.user;
+  // Merge so the caller's cached reference (e.g. session.user) updates
+  if (data && data.user) mergeFromServer(data.user);
+  return cachedUser;
 }
 
 export async function disableUser(id)  { return api(`/api/admin/users/${id}/disable`,  { method: 'PATCH', auth: true }); }
@@ -153,5 +183,5 @@ export async function deleteUser(id)   { return api(`/api/admin/users/${id}`,   
 export function listUsernames() { return cachedUser ? [cachedUser.name] : []; }
 export function wipeAll() {
   setToken(null);
-  saveCachedUser(null);
+  setCachedUser(null);
 }
