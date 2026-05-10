@@ -1,0 +1,23 @@
+<!--
+  Drop-in <head> additions for the mobile-kit.
+  Replace MY APP NAME and #16213e with the target app's real values.
+  Everything below should sit AFTER your existing <meta charset> and <title>.
+-->
+
+<!-- Viewport — locks zoom, lets the page draw under the notch -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+
+<!-- PWA hints (Android Chrome reads these) -->
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#16213e" />
+
+<!-- iOS-specific PWA hints. Without these the home-screen install opens
+     in Safari with a URL bar instead of a real app shell. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="MY APP NAME" />
+
+<!-- PWA manifest + icon -->
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" type="image/svg+xml" href="/icon.svg" />
+<link rel="apple-touch-icon" href="/icon.svg" />

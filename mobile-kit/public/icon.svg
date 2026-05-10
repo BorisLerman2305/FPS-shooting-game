@@ -1,0 +1,15 @@
+<!--
+  Placeholder PWA icon — generic crosshair.
+  Replace with the target app's real brand icon.
+  For PWA installability across browsers, prefer a 512×512 PNG. To use one,
+  drop it in $STATIC/icon-512.png and update manifest.json's icons array.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" fill="#16213e" rx="36"/>
+  <circle cx="96" cy="96" r="58" fill="none" stroke="#ffd54a" stroke-width="6"/>
+  <line x1="96" y1="22"  x2="96"  y2="58"  stroke="#ffd54a" stroke-width="6" stroke-linecap="round"/>
+  <line x1="96" y1="134" x2="96"  y2="170" stroke="#ffd54a" stroke-width="6" stroke-linecap="round"/>
+  <line x1="22" y1="96"  x2="58"  y2="96"  stroke="#ffd54a" stroke-width="6" stroke-linecap="round"/>
+  <line x1="134" y1="96" x2="170" y2="96"  stroke="#ffd54a" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="96" cy="96" r="9" fill="#ff6b35"/>
+</svg>

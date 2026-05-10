@@ -1,0 +1,97 @@
+/*
+  Mobile Web App Kit — companion CSS.
+  Imports nothing. Drop this in after your other stylesheets so its rules
+  win cascade ties.
+
+  Selectors used:
+   - body.is-touch       — added by mobile-bootstrap.js on touch devices
+   - body.is-standalone  — added when launched from the home screen as a PWA
+   - --viewport-h / --viewport-w — CSS vars set by mobile-bootstrap.js,
+        match the *visible* area (excluding URL bar / virtual keyboard)
+*/
+
+/* ─── Reset spacing under the notch / Dynamic Island ─────────────────── */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  /* Use the JS-set var if available (handles URL bar collapse), fall back to
+     dvh (dynamic viewport height) where supported, then to vh. */
+  height: var(--viewport-h, 100dvh);
+  min-height: 100vh;
+  /* Disable the rubber-band overscroll background flash on iOS */
+  background: var(--app-bg, #16213e);
+  /* Smooth scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+  /* No tap highlight on iOS Safari */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Touch-only: kill text selection on UI elements (it triggers a magnifier
+   on iOS and ruins the feel of buttons). Keep selection inside <input>,
+   <textarea>, and elements that opt back in via .selectable. */
+body.is-touch * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+body.is-touch input,
+body.is-touch textarea,
+body.is-touch .selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ─── Safe-area-aware "fixed" positioning helpers ─────────────────────── */
+/* Add the .safe-* classes to any fixed element to push it inside the
+   notch/Dynamic Island/home indicator. */
+.safe-top    { padding-top:    env(safe-area-inset-top); }
+.safe-right  { padding-right:  env(safe-area-inset-right); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left   { padding-left:   env(safe-area-inset-left); }
+.safe-all    {
+  padding-top:    env(safe-area-inset-top);
+  padding-right:  env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left:   env(safe-area-inset-left);
+}
+
+/* ─── iOS install hint banner (id is hard-coded in mobile-bootstrap.js) ─ */
+#mobileKitIOSHint {
+  position: fixed;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.92); color: #ffd54a;
+  padding: 12px 20px; border-radius: 12px;
+  font-size: 14px; line-height: 1.5; max-width: 88vw;
+  text-align: center; z-index: 99999; cursor: pointer;
+  border: 1px solid rgba(255, 213, 74, 0.4);
+  animation: mobileKitHintRise 0.3s ease-out;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#mobileKitIOSHint .small { font-size: 12px; opacity: 0.85; margin-top: 4px; color: #fff; }
+#mobileKitIOSHint .close { font-size: 11px; opacity: 0.6; margin-top: 6px; }
+@keyframes mobileKitHintRise {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ─── Landscape phone tuning hook (use as a base, override per app) ──── */
+/* If your app has tight spacing that breaks in phone-landscape, group those
+   shrunk styles inside this query. */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Example: reduce a header's padding when rotated */
+  /* .my-header { padding: 6px 12px; } */
+}
+
+/* ─── Very-narrow portrait fallback ─────────────────────────────────── */
+@media (orientation: portrait) and (max-width: 380px) {
+  /* Older small phones — drop your own overrides here */
+}
+
+/* ─── Standalone-only tweaks ─────────────────────────────────────────── */
+/* Once installed to the home screen, you usually want a slightly bolder
+   look since the user has committed to the app. */
+body.is-standalone {
+  /* example: */
+  /* background: #0f1730; */
+}

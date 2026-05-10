@@ -1,0 +1,22 @@
+{
+  "name": "MY APP NAME",
+  "short_name": "MyApp",
+  "description": "Replace with a one-line description of the app.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#16213e",
+  "theme_color": "#16213e",
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
