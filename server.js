@@ -12,10 +12,23 @@ import { fileURLToPath } from 'node:url';
 import {
   migrate, pool,
   findUserByUsername, findUserById, userCount,
-  createUser, touchLastLogin, updateLoadout, bumpStats,
+  createUser, touchLastLogin, updateLoadout, bumpStats, buyItem,
   listAllUsers, setUserDisabled, deleteUser, setUserAdmin,
   publicUser,
 } from './db.js';
+
+// ─── Shop catalog (server-authoritative — client cannot fake costs) ──────
+// Mirrored on the client (src/shop.js) so both sides agree on what exists.
+const SHOP_ITEMS = {
+  rpg:           { kind: 'weapon', cost: 100 },
+  tommyGun:      { kind: 'weapon', cost: 250 },
+  lightsaber:    { kind: 'weapon', cost: 500 },
+  crossbow:      { kind: 'weapon', cost: 150 },
+  minigun:       { kind: 'weapon', cost: 400 },
+  hpBoost:       { kind: 'perk',   cost: 200 },
+  staminaBoost:  { kind: 'perk',   cost: 150 },
+  grenadeMax:    { kind: 'perk',   cost: 100 },
+};
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -146,6 +159,32 @@ app.post('/api/me/stats', authMiddleware(true), async (req, res) => {
   await bumpStats(req.user.id, deltas);
   const row = await findUserById(req.user.id);
   res.json({ user: publicUser(row) });
+});
+
+// ─── Shop ────────────────────────────────────────────────────────────────
+app.get('/api/shop/items', (req, res) => {
+  // Just the costs/kinds — the client knows the human-readable details
+  res.json({ items: SHOP_ITEMS });
+});
+
+app.post('/api/me/buy', authMiddleware(true), async (req, res) => {
+  const itemId = req.body && req.body.itemId;
+  if (typeof itemId !== 'string' || !SHOP_ITEMS[itemId]) {
+    return res.status(400).json({ error: 'פריט לא קיים בחנות' });
+  }
+  const { cost } = SHOP_ITEMS[itemId];
+  // Refresh the user record so we don't act on a stale balance
+  const fresh = await findUserById(req.user.id);
+  if (!fresh) return res.status(404).json({ error: 'משתמש לא נמצא' });
+  if ((fresh.owned_items || []).includes(itemId)) {
+    return res.status(409).json({ error: 'כבר ברשותך' });
+  }
+  if (fresh.coins < cost) {
+    return res.status(402).json({ error: 'אין מספיק מטבעות' });
+  }
+  const updated = await buyItem(req.user.id, itemId, cost);
+  if (!updated) return res.status(409).json({ error: 'הקנייה נכשלה' });
+  res.json({ user: publicUser(updated) });
 });
 
 // ─── Admin endpoints ─────────────────────────────────────────────────────

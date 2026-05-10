@@ -41,6 +41,7 @@ export async function migrate() {
   `);
   // Make sure existing databases also pick up the new column.
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS coins INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS owned_items TEXT[] NOT NULL DEFAULT '{}'`);
   await pool.query(`CREATE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`);
   console.log('[db] migration complete');
 }
@@ -65,7 +66,25 @@ export function publicUser(row) {
     loadout: {
       favoriteWeapon: row.favorite_weapon,
     },
+    ownedItems: row.owned_items || [],
   };
+}
+
+// ─── Shop ────────────────────────────────────────────────────────────────
+// Atomically charge a user `cost` coins and add `itemId` to their owned list.
+// Returns the updated row (or null if the user couldn't afford it / already owns it).
+export async function buyItem(id, itemId, cost) {
+  const { rows } = await pool.query(
+    `UPDATE users
+     SET coins = coins - $3,
+         owned_items = array_append(owned_items, $2)
+     WHERE id = $1
+       AND coins >= $3
+       AND NOT ($2 = ANY(owned_items))
+     RETURNING *`,
+    [id, itemId, cost]
+  );
+  return rows[0] || null;
 }
 
 // ─── Queries ─────────────────────────────────────────────────────────────

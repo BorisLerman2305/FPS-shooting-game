@@ -136,6 +136,13 @@ export async function listAllUsers() {
   return data.users;
 }
 
+// ─── Shop ────────────────────────────────────────────────────────────────
+export async function buyItem(itemId) {
+  const data = await api('/api/me/buy', { method: 'POST', body: { itemId }, auth: true });
+  if (data && data.user) saveCachedUser(data.user);
+  return data.user;
+}
+
 export async function disableUser(id)  { return api(`/api/admin/users/${id}/disable`,  { method: 'PATCH', auth: true }); }
 export async function enableUser(id)   { return api(`/api/admin/users/${id}/enable`,   { method: 'PATCH', auth: true }); }
 export async function promoteUser(id)  { return api(`/api/admin/users/${id}/promote`,  { method: 'PATCH', auth: true }); }

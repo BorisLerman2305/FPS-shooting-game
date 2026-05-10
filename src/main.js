@@ -8,6 +8,7 @@ import * as Auth from './auth.js';
 import * as Sfx from './audio.js';
 import { net } from './net.js';
 import { isTouch, touchState, setupTouchControls } from './touch.js';
+import { SHOP_ITEMS, SHOP_ORDER, isOwned } from './shop.js';
 
 // ─── Scene, camera, renderer ──────────────────────────────────────────────
 const scene = new THREE.Scene();
@@ -713,8 +714,12 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
   game.kills = 0;
   game.pendingSpawns = 0;
   game.bossSpawned = false;
-  game.coinsThisGame = 0;          // coins earned this round (for the end-of-game screen)
+  game.coinsThisGame = 0;
+  // Perks: HP / stamina / grenade caps depend on what the player owns
+  game.playerHPMax = playerOwns('hpBoost') ? 125 : 100;
   game.playerHP = game.playerHPMax;
+  game.staminaMax = playerOwns('staminaBoost') ? 130 : STAMINA_MAX;
+  game.maxGrenades = playerOwns('grenadeMax') ? 7 : MAX_GRENADES;
   game.alive = true;
   updateCoinHUD();
 
@@ -747,7 +752,8 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
   diffLabelEl.textContent = conf.label;
   updateHPUI();
   // Reset stamina + all weapons (refill magazine + reserve, cancel any reloads)
-  stamina.value = STAMINA_MAX;
+  // (Stamina cap honours the staminaBoost perk if owned.)
+  stamina.value = game.staminaMax || STAMINA_MAX;
   stamina.lockedOut = false;
   for (const id of Object.keys(weapons)) {
     weapons[id].ammo = WEAPONS[id].maxAmmo;
@@ -758,8 +764,9 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
     weapons[id].model.position.copy(weapons[id].restPos);
     weapons[id].model.rotation.x = weapons[id].restRotX;
   }
-  // Reset grenades (you start with 2; pickups give you more)
+  // Reset grenades (you start with 2; pickups give you more — capped at maxGrenades)
   grenades.count = 2;
+  grenades.maxOverride = game.maxGrenades || MAX_GRENADES;
   updateGrenadeHUD();
   // Clear any leftover thrown grenades, explosions, flame particles
   clearActiveProjectiles();
@@ -862,13 +869,18 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') keys.space = true;
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.shift = true;
   if (e.code === 'KeyR') reload();
-  // Weapon switching
+  // Weapon switching — base weapons always work, shop weapons only if owned
   if (e.code === 'Digit1') setWeapon('pistol');
   if (e.code === 'Digit2') setWeapon('rifle');
   if (e.code === 'Digit3') setWeapon('sniper');
   if (e.code === 'Digit4') setWeapon('shotgun');
   if (e.code === 'Digit5') setWeapon('sword');
   if (e.code === 'Digit6') setWeapon('flamethrower');
+  if (e.code === 'Digit7' && playerOwns('rpg'))        setWeapon('rpg');
+  if (e.code === 'Digit8' && playerOwns('tommyGun'))   setWeapon('tommyGun');
+  if (e.code === 'Digit9' && playerOwns('lightsaber')) setWeapon('lightsaber');
+  if (e.code === 'Digit0' && playerOwns('crossbow'))   setWeapon('crossbow');
+  if (e.code === 'Minus'  && playerOwns('minigun'))    setWeapon('minigun');
   // Throw grenade
   if (e.code === 'KeyG') tryThrowGrenade();
 });
@@ -934,6 +946,46 @@ const WEAPONS = {
     fireMode: 'melee', maxAmmo: null, damage: 60, range: 3.5,
     fireInterval: 0.5, headshotMult: 1.2,
     swingArc: 1.4, swingTime: 0.25,
+  },
+  // ─── Shop weapons (locked until purchased) ───────────────────────────
+  rpg: {
+    id: 'rpg', name: 'RPG', shopOnly: true,
+    fireMode: 'projectile', maxAmmo: 1, reserveStart: 4, reserveCap: 12,
+    damage: 200, splashRadius: 7,
+    range: 200, projectileSpeed: 32,
+    fireInterval: 1.4, reloadTime: 2.4,
+    spread: 0, pellets: 1, headshotMult: 1,
+    recoilZ: 0.30, recoilTime: 0.30,
+  },
+  tommyGun: {
+    id: 'tommyGun', name: 'תת-מקלע מאפיה', shopOnly: true,
+    fireMode: 'auto', maxAmmo: 50, reserveStart: 100, reserveCap: 200,
+    damage: 12, range: 70,
+    fireInterval: 0.07, reloadTime: 1.8,
+    spread: 0.025, pellets: 1, headshotMult: 1.6,
+    recoilZ: 0.04, recoilTime: 0.05,
+  },
+  lightsaber: {
+    id: 'lightsaber', name: 'חרב לייזר', shopOnly: true,
+    fireMode: 'melee', maxAmmo: null, damage: 120, range: 4.5,
+    fireInterval: 0.35, headshotMult: 1.4,
+    swingArc: 1.7, swingTime: 0.22,
+  },
+  crossbow: {
+    id: 'crossbow', name: 'קשת', shopOnly: true,
+    fireMode: 'semi', maxAmmo: 1, reserveStart: 12, reserveCap: 30,
+    damage: 100, range: 150,
+    fireInterval: 0.9, reloadTime: 1.2,
+    spread: 0, pellets: 1, headshotMult: 2.5,
+    recoilZ: 0.10, recoilTime: 0.18,
+  },
+  minigun: {
+    id: 'minigun', name: 'מיניגן', shopOnly: true,
+    fireMode: 'auto', maxAmmo: 100, reserveStart: 200, reserveCap: 500,
+    damage: 9, range: 90,
+    fireInterval: 0.05, reloadTime: 3.0,
+    spread: 0.045, pellets: 1, headshotMult: 1.5,
+    recoilZ: 0.03, recoilTime: 0.04,
   },
 };
 
@@ -1128,6 +1180,198 @@ function createFlamethrowerModel() {
   return { group: g, muzzle };
 }
 
+function createRPGModel() {
+  const g = new THREE.Group();
+  const tubeMat = new THREE.MeshStandardMaterial({ color: 0x556b2f, roughness: 0.7 });
+  const ringMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+  const sightMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+  // Long launcher tube
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 1.0, 18), tubeMat);
+  tube.rotation.x = Math.PI / 2; tube.position.set(0, 0.04, -0.35);
+  // Cone-shaped warhead sticking out of the front
+  const warhead = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.30, 14), new THREE.MeshStandardMaterial({ color: 0xa0392b, roughness: 0.5 }));
+  warhead.rotation.x = -Math.PI / 2; warhead.position.set(0, 0.04, -0.95);
+  // Reinforcement rings around the tube
+  for (let i = -1; i <= 1; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.01, 8, 18), ringMat);
+    ring.rotation.y = Math.PI / 2; ring.position.set(0, 0.04, -0.10 + i * -0.30);
+    g.add(ring);
+  }
+  // Trigger grip below the tube
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.10), tubeMat);
+  grip.position.set(0, -0.16, 0.02);
+  // Iron sight on top
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.06), sightMat);
+  sight.position.set(0, 0.18, -0.10);
+  // Muzzle (back blast point — we still want a flash)
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 10), muzzleMat());
+  muzzle.position.set(0, 0.04, 0.20);
+  // Hands
+  const rightHand = createPlayerHand('right'); rightHand.position.set(0, -0.10, -0.05);
+  const leftHand  = createPlayerHand('left');  leftHand.position.set(0, -0.04, -0.55);
+  g.add(tube, warhead, grip, sight, muzzle, rightHand, leftHand);
+  g.position.set(0.30, -0.30, -0.55);
+  return { group: g, muzzle };
+}
+
+function createTommyGunModel() {
+  const g = new THREE.Group();
+  const stockMat   = new THREE.MeshStandardMaterial({ color: 0x6b3a1a, roughness: 0.7 });   // walnut wood
+  const bodyMat    = new THREE.MeshStandardMaterial({ color: 0x2a2a2a });
+  const drumMat    = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.4, metalness: 0.5 });
+  const drumBandMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.6 });
+  const barrelMat  = new THREE.MeshStandardMaterial({ color: 0x111111 });
+  // Wooden stock
+  const stock  = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.30), stockMat); stock.position.set(0, 0,  0.20);
+  // Body
+  const body   = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.13, 0.42), bodyMat);  body.position.set(0, 0, -0.10);
+  // Round drum magazine
+  const drum   = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.06, 24), drumMat);
+  drum.position.set(0, -0.16, -0.10);
+  const drumBand = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.012, 8, 24), drumBandMat);
+  drumBand.rotation.x = Math.PI / 2; drumBand.position.set(0, -0.16, -0.10);
+  // Barrel with cooling fins
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.40, 14), barrelMat);
+  barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.04, -0.50);
+  for (let i = 0; i < 5; i++) {
+    const fin = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.008, 6, 14), drumBandMat);
+    fin.rotation.y = Math.PI / 2; fin.position.set(0, 0.04, -0.36 - i * 0.05);
+    g.add(fin);
+  }
+  // Wooden foregrip
+  const foregrip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.10), stockMat);
+  foregrip.position.set(0, -0.10, -0.30);
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), muzzleMat());
+  muzzle.position.set(0, 0.04, -0.72);
+  // Hands
+  const rightHand = createPlayerHand('right'); rightHand.position.set(0, -0.04, 0.05);
+  const leftHand  = createPlayerHand('left');  leftHand.position.set(0, -0.06, -0.30);
+  g.add(stock, body, drum, drumBand, barrel, foregrip, muzzle, rightHand, leftHand);
+  g.position.set(0.28, -0.28, -0.5);
+  return { group: g, muzzle };
+}
+
+function createLightsaberModel() {
+  const g = new THREE.Group();
+  // Metal hilt with bands
+  const hiltMat  = new THREE.MeshStandardMaterial({ color: 0x9aa1a8, metalness: 0.85, roughness: 0.25 });
+  const bandMat  = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  const buttonMat = new THREE.MeshStandardMaterial({ color: 0xff3030, emissive: 0xff0000, emissiveIntensity: 0.6 });
+  const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.30, 14), hiltMat);
+  hilt.rotation.x = Math.PI / 2; hilt.position.set(0, 0, 0.10);
+  // Black grip bands wrapping the hilt
+  for (let i = 0; i < 3; i++) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.008, 8, 14), bandMat);
+    band.rotation.y = Math.PI / 2; band.position.set(0, 0, 0.18 - i * 0.07);
+    g.add(band);
+  }
+  // Activation button
+  const button = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8), buttonMat);
+  button.position.set(0.05, 0.02, 0.22);
+  // Glowing blade — emissive + transparent core, with bloom around it
+  const bladeColor = 0x4ad8ff;
+  const bladeCore = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.025, 0.95, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  bladeCore.rotation.x = Math.PI / 2; bladeCore.position.set(0, 0, -0.50);
+  const bladeGlow = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.06, 1.00, 14),
+    new THREE.MeshBasicMaterial({ color: bladeColor, transparent: true, opacity: 0.5, depthWrite: false })
+  );
+  bladeGlow.rotation.x = Math.PI / 2; bladeGlow.position.set(0, 0, -0.50);
+  const bladeTip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 12, 10),
+    new THREE.MeshBasicMaterial({ color: bladeColor, transparent: true, opacity: 0.5, depthWrite: false })
+  );
+  bladeTip.position.set(0, 0, -1.0);
+  // Right hand on the hilt
+  const rightHand = createPlayerHand('right'); rightHand.position.set(0, -0.03, 0.20);
+  g.add(hilt, button, bladeCore, bladeGlow, bladeTip, rightHand);
+  g.position.set(0.35, -0.32, -0.5);
+  g.rotation.set(0, -0.2, 0);
+  return { group: g, muzzle: null };
+}
+
+function createCrossbowModel() {
+  const g = new THREE.Group();
+  const woodMat  = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.85 });
+  const metalMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.6, roughness: 0.4 });
+  const stringMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.7 });
+  // Stock + body
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.40), woodMat);
+  stock.position.set(0, 0, 0.05);
+  // Bow arms — two angled blocks
+  const arm1 = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.05, 0.04), woodMat);
+  arm1.position.set(0, 0.04, -0.20);
+  arm1.rotation.z = 0.0;
+  // String (just a thin cylinder across the front)
+  const string = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.50, 6), stringMat);
+  string.rotation.z = Math.PI / 2; string.position.set(0, 0.04, -0.05);
+  // Loaded bolt
+  const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 8), metalMat);
+  bolt.rotation.x = Math.PI / 2; bolt.position.set(0, 0.04, -0.30);
+  // Bolt fletching
+  const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.005, 0.04), metalMat);
+  fletch.position.set(0, 0.045, -0.08);
+  // Sight
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.06, 0.06), metalMat);
+  sight.position.set(0, 0.13, -0.10);
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), muzzleMat());
+  muzzle.position.set(0, 0.04, -0.55);
+  // Hands
+  const rightHand = createPlayerHand('right'); rightHand.position.set(0, -0.04, 0.10);
+  const leftHand  = createPlayerHand('left');  leftHand.position.set(0, -0.05, -0.18);
+  g.add(stock, arm1, string, bolt, fletch, sight, muzzle, rightHand, leftHand);
+  g.position.set(0.28, -0.28, -0.5);
+  return { group: g, muzzle };
+}
+
+function createMinigunModel() {
+  const g = new THREE.Group();
+  const bodyMat   = new THREE.MeshStandardMaterial({ color: 0x2a2a2a });
+  const barrelMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.5 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.6 });
+  // Big chunky body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.20, 0.50), bodyMat);
+  body.position.set(0, 0, -0.10);
+  // 6 rotating barrels arranged in a circle
+  const barrelGroup = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    const bx = Math.cos(ang) * 0.06;
+    const by = Math.sin(ang) * 0.06;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.55, 10), barrelMat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(bx, by, -0.55);
+    barrelGroup.add(barrel);
+  }
+  // Center hub
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.55, 14), accentMat);
+  hub.rotation.x = Math.PI / 2; hub.position.set(0, 0, -0.55);
+  barrelGroup.add(hub);
+  // Front ring
+  const frontRing = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.012, 8, 18), accentMat);
+  frontRing.position.set(0, 0, -0.82);
+  barrelGroup.add(frontRing);
+  g.add(barrelGroup);
+  g.userData.barrelGroup = barrelGroup;
+  // Ammo belt feeding from the side
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.10, 0.25), accentMat);
+  belt.position.set(0.13, -0.08, -0.15);
+  // Trigger grip
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.10), bodyMat);
+  grip.position.set(0, -0.18, 0.02);
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 10), muzzleMat());
+  muzzle.position.set(0, 0, -0.85);
+  // Hands
+  const rightHand = createPlayerHand('right'); rightHand.position.set(0, -0.12, -0.05);
+  const leftHand  = createPlayerHand('left');  leftHand.position.set(-0.10, -0.04, -0.20);
+  g.add(body, belt, grip, muzzle, rightHand, leftHand);
+  g.position.set(0.32, -0.30, -0.5);
+  return { group: g, muzzle };
+}
+
 function createSwordModel() {
   const g = new THREE.Group();
   const hilt  = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.22, 12), new THREE.MeshStandardMaterial({ color: 0x6b4226 }));
@@ -1153,6 +1397,11 @@ const WEAPON_FACTORIES = {
   shotgun: createShotgunModel,
   flamethrower: createFlamethrowerModel,
   sword: createSwordModel,
+  rpg: createRPGModel,
+  tommyGun: createTommyGunModel,
+  lightsaber: createLightsaberModel,
+  crossbow: createCrossbowModel,
+  minigun: createMinigunModel,
 };
 
 const weapons = {};
@@ -1226,8 +1475,15 @@ function updateWeaponHUD() {
   }
 }
 
+// Returns true if the player has unlocked the shop item (or it's a base weapon).
+function playerOwns(itemId) {
+  if (!WEAPONS[itemId] || !WEAPONS[itemId].shopOnly) return true; // base weapons free
+  return !!(session.user && (session.user.ownedItems || []).includes(itemId));
+}
+
 function setWeapon(id) {
   if (!weapons[id]) return;
+  if (WEAPONS[id] && WEAPONS[id].shopOnly && !playerOwns(id)) return;
   if (id !== currentWeaponId) {
     weapons[currentWeaponId].model.visible = false;
     weapons[id].model.visible = true;
@@ -1723,6 +1979,7 @@ function tryFire() {
     return;
   }
   if (w.conf.fireMode === 'melee') { swingMelee(w); Sfx.swordSwing(); }
+  else if (w.conf.fireMode === 'projectile') { fireProjectile(w); Sfx.shotSniper(); }
   else { fireRanged(w); const s = SHOT_SOUND[w.conf.id]; if (s) s(); }
   fireCooldown = w.conf.fireInterval;
 }
@@ -1878,9 +2135,9 @@ const PICKUP_TYPES = {
   medkit: {
     name: 'ערכת עזרה', glowColor: 0x88e88a,
     radius: 1.6, respawnTime: 30,
-    canPickup: () => game.alive && game.playerHP < game.playerHPMax,
+    canPickup: () => game.alive && game.playerHP < (game.playerHPMax || 100),
     apply: () => {
-      game.playerHP = Math.min(game.playerHPMax, game.playerHP + 50);
+      game.playerHP = Math.min(game.playerHPMax || 100, game.playerHP + 50);
       updateHPUI();
     },
     build: buildMedkitMesh,
@@ -1904,9 +2161,10 @@ const PICKUP_TYPES = {
   grenade: {
     name: 'חבילת רימונים', glowColor: 0xff8888,
     radius: 1.6, respawnTime: 30,
-    canPickup: () => grenades.count < MAX_GRENADES,
+    canPickup: () => grenades.count < (grenades.maxOverride || MAX_GRENADES),
     apply: () => {
-      grenades.count = Math.min(MAX_GRENADES, grenades.count + 3);
+      const cap = grenades.maxOverride || MAX_GRENADES;
+      grenades.count = Math.min(cap, grenades.count + 3);
       updateGrenadeHUD();
     },
     build: buildGrenadePackMesh,
@@ -2196,6 +2454,8 @@ function clearActiveProjectiles() {
   explosions.length = 0;
   for (const fp of flameParticles) scene.remove(fp.mesh);
   flameParticles.length = 0;
+  for (const p of projectiles) scene.remove(p.mesh);
+  projectiles.length = 0;
 }
 
 const _camFwd = new THREE.Vector3();
@@ -2307,6 +2567,88 @@ function tickWeapons(dt) {
   }
 }
 
+// ─── Projectile weapons (RPG) ────────────────────────────────────────────
+const projectiles = []; // { mesh, vel, conf, age }
+
+function fireProjectile(w) {
+  if (w.conf.maxAmmo !== null) {
+    w.ammo -= 1;
+    updateWeaponHUD();
+  }
+  // Build the rocket mesh — small body + cone warhead + smoke trail spawn point
+  const rocket = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x556b2f, roughness: 0.5 });
+  const tipMat  = new THREE.MeshStandardMaterial({ color: 0xa0392b, roughness: 0.4, emissive: 0x441111, emissiveIntensity: 0.6 });
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.30, 12), bodyMat);
+  tube.rotation.x = Math.PI / 2;
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.14, 12), tipMat);
+  tip.rotation.x = -Math.PI / 2; tip.position.z = -0.20;
+  // Tail flame
+  const flame = new THREE.Mesh(
+    new THREE.ConeGeometry(0.05, 0.12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffaa30, transparent: true, opacity: 0.9 })
+  );
+  flame.rotation.x = Math.PI / 2; flame.position.z = 0.20;
+  rocket.add(tube, tip, flame);
+  // Spawn position: from the camera muzzle, in look direction
+  const fwd = new THREE.Vector3();
+  camera.getWorldDirection(fwd);
+  rocket.position.copy(camera.position).add(fwd.clone().multiplyScalar(0.6));
+  rocket.position.y -= 0.15;
+  // Orient the rocket to point forward
+  rocket.lookAt(rocket.position.clone().add(fwd));
+  scene.add(rocket);
+  projectiles.push({
+    mesh: rocket,
+    vel: fwd.clone().multiplyScalar(w.conf.projectileSpeed || 30),
+    conf: w.conf,
+    age: 0,
+  });
+  // Recoil + muzzle flash
+  if (w.muzzle) {
+    w.muzzle.material.opacity = 1;
+    setTimeout(() => { w.muzzle.material.opacity = 0; }, 80);
+  }
+  w.recoilTimer = w.conf.recoilTime;
+}
+
+const _projTo = new THREE.Vector3();
+const _projRay = new THREE.Raycaster();
+function tickProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.age += dt;
+    // Move forward
+    const step = p.vel.clone().multiplyScalar(dt);
+    const prev = p.mesh.position.clone();
+    p.mesh.position.add(step);
+    // Detect collision: raycast from prev to new along path
+    _projRay.set(prev, step.clone().normalize());
+    _projRay.far = step.length() + 0.1;
+    const wallMeshes = colliders.map(c => c.mesh);
+    const botParts = [];
+    for (const b of bots) if (b.alive) for (const part of b.parts) botParts.push(part);
+    const hits = _projRay.intersectObjects([...wallMeshes, ...botParts], false);
+    let exploded = false;
+    if (hits.length > 0) {
+      _projTo.copy(hits[0].point);
+      explodeAt(_projTo, p.conf.damage, p.conf.splashRadius);
+      exploded = true;
+    } else if (p.age > 6) {
+      // Fuse — explode in air after 6 seconds so we don't leak meshes
+      explodeAt(p.mesh.position.clone(), p.conf.damage, p.conf.splashRadius);
+      exploded = true;
+    } else if (p.mesh.position.y < 0.1) {
+      explodeAt(p.mesh.position.clone(), p.conf.damage, p.conf.splashRadius);
+      exploded = true;
+    }
+    if (exploded) {
+      scene.remove(p.mesh);
+      projectiles.splice(i, 1);
+    }
+  }
+}
+
 // Hit sparks — small bright particles when bullets impact a wall/object
 const sparks = [];
 const sparkGeo = new THREE.SphereGeometry(0.04, 4, 3);
@@ -2374,27 +2716,26 @@ function animate() {
     const isSprinting = keys.shift && isMoving && stamina.value > 0 && !stamina.lockedOut;
     const speedMult = isSprinting ? SPRINT_MULTIPLIER : 1;
 
-    // Stamina drain / regen
+    // Stamina drain / regen — cap honours the staminaBoost perk
+    const staminaCap = game.staminaMax || STAMINA_MAX;
     if (isSprinting) {
       stamina.value = Math.max(0, stamina.value - STAMINA_DRAIN_PER_SEC * dt);
       stamina.regenCooldown = STAMINA_REGEN_DELAY;
-      // If we hit zero, lock out sprint until it recovers a bit (avoids 1-frame spam)
       if (stamina.value === 0) stamina.lockedOut = true;
     } else {
       if (stamina.regenCooldown > 0) {
         stamina.regenCooldown = Math.max(0, stamina.regenCooldown - dt);
       } else {
-        stamina.value = Math.min(STAMINA_MAX, stamina.value + STAMINA_REGEN_PER_SEC * dt);
+        stamina.value = Math.min(staminaCap, stamina.value + STAMINA_REGEN_PER_SEC * dt);
       }
-      // Re-enable sprint once we've recovered a meaningful amount
       if (stamina.lockedOut && stamina.value > 25) stamina.lockedOut = false;
     }
 
     // Update stamina UI (color shifts when low / empty)
-    const staminaPct = (stamina.value / STAMINA_MAX) * 100;
+    const staminaPct = (stamina.value / staminaCap) * 100;
     staminaFillEl.style.width = staminaPct + '%';
     staminaTextEl.textContent = Math.round(stamina.value);
-    staminaWrapEl.classList.toggle('low', stamina.value < 35 && stamina.value > 0);
+    staminaWrapEl.classList.toggle('low', stamina.value < (staminaCap * 0.35) && stamina.value > 0);
     staminaWrapEl.classList.toggle('empty', stamina.value === 0 || stamina.lockedOut);
 
     // Damping (friction) on horizontal velocity
@@ -2436,10 +2777,18 @@ function animate() {
   tickWeapons(dt);
   tickFlameParticles(dt);
   tickGrenades(dt);
+  tickProjectiles(dt);
   tickExplosions(dt);
   tickSparks(dt);
   tickPickups(dt, clock.elapsedTime);
   tickNetSync(dt);
+
+  // Spin the minigun barrels while the player is firing it
+  const wep = weapons[currentWeaponId];
+  if (wep && wep.conf.id === 'minigun' && wep.model.userData.barrelGroup) {
+    const isShooting = mouseDown && controls.isLocked && game.alive && wep.ammo > 0;
+    wep.model.userData.barrelGroup.rotation.z += (isShooting ? 18 : 0) * dt;
+  }
 
   // Sun + shadow camera follow the player so shadows stay sharp on the
   // bigger map. The shadow frustum is small (~70m), but it moves with us.
@@ -2508,6 +2857,7 @@ function refreshSessionUser() {
 function updateOverlayUserUI() {
   const adminBadge = document.getElementById('adminBadge');
   const adminBtn = document.getElementById('adminBtn');
+  const shopBtn = document.getElementById('shopBtn');
   const userCoinsEl = document.getElementById('userCoins');
   if (session.user) {
     userBarEl.textContent = session.user.name;
@@ -2517,16 +2867,26 @@ function updateOverlayUserUI() {
     userStatsEl.style.display = '';
     adminBadge.classList.toggle('hidden', !session.user.isAdmin);
     adminBtn.classList.toggle('hidden', !session.user.isAdmin);
-    // Coin pill is logged-in only — guests don't accrue currency
+    // Coin pill + shop button are logged-in only
     userCoinsEl.textContent = '💰 ' + (session.user.stats.coins || 0);
     userCoinsEl.classList.remove('hidden');
+    shopBtn.classList.remove('hidden');
   } else {
     userBarEl.textContent = 'אורח';
     userStatsEl.style.display = 'none';
     adminBadge.classList.add('hidden');
     adminBtn.classList.add('hidden');
     userCoinsEl.classList.add('hidden');
+    shopBtn.classList.add('hidden');
   }
+  // Show / hide shop-weapon loadout buttons based on ownership
+  document.querySelectorAll('#overlay .loadout-picks button[data-shop]').forEach(b => {
+    b.classList.toggle('hidden', !playerOwns(b.dataset.shop));
+  });
+  // Show / hide shop-weapon row slots based on ownership (in-game HUD)
+  document.querySelectorAll('#weaponRow .slot[data-shop]').forEach(slot => {
+    slot.classList.toggle('hidden', !playerOwns(slot.dataset.shop));
+  });
   // Highlight the favorite weapon button
   const fav = getEffectiveFavorite();
   document.querySelectorAll('#overlay .loadout-picks button[data-fav]').forEach(b => {
@@ -2539,6 +2899,69 @@ const coinHudEl    = document.getElementById('coinHud');
 const coinTotalEl  = document.getElementById('coinTotal');
 const coinFlashEl  = document.getElementById('coinFlash');
 let _coinFlashTimer = 0;
+
+// ─── Shop UI ─────────────────────────────────────────────────────────────
+const shopPanelEl = document.getElementById('shopPanel');
+const shopGridEl  = document.getElementById('shopGrid');
+const shopBalanceEl = document.getElementById('shopBalance');
+const shopErrorEl   = document.getElementById('shopError');
+
+document.getElementById('shopBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!session.user) return;
+  openShop();
+});
+document.getElementById('shopCloseBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  shopPanelEl.classList.add('hidden');
+});
+
+function openShop() {
+  shopPanelEl.classList.remove('hidden');
+  shopErrorEl.innerHTML = '&nbsp;';
+  renderShop();
+}
+
+function renderShop() {
+  if (!session.user) return;
+  const coins = session.user.stats.coins || 0;
+  shopBalanceEl.textContent = coins;
+  shopGridEl.innerHTML = '';
+  for (const id of SHOP_ORDER) {
+    const item = SHOP_ITEMS[id];
+    if (!item) continue;
+    const owned = isOwned(session.user, id);
+    const tooPoor = !owned && coins < item.cost;
+    const card = document.createElement('div');
+    card.className = 'shop-card' + (owned ? ' owned' : '') + (tooPoor ? ' too-poor' : '');
+    card.innerHTML = `
+      <div class="kind">${item.kind === 'weapon' ? 'נשק' : 'שדרוג'}</div>
+      <div class="icon">${item.icon}</div>
+      <div class="name">${item.name}</div>
+      <div class="desc">${item.description}</div>
+      <div class="cost">💰 ${item.cost}</div>
+    `;
+    const btn = document.createElement('button');
+    btn.textContent = owned ? '✓ ברשותך' : (tooPoor ? '🔒 חסרים מטבעות' : 'קנה');
+    if (!owned && !tooPoor) {
+      btn.onclick = async () => {
+        shopErrorEl.innerHTML = '&nbsp;';
+        btn.disabled = true; btn.textContent = 'קונה...';
+        try {
+          session.user = await Auth.buyItem(id);
+          renderShop();
+          updateOverlayUserUI();
+          updateCoinHUD();
+        } catch (err) {
+          shopErrorEl.textContent = err.message || 'הקנייה נכשלה';
+          btn.disabled = false; btn.textContent = 'קנה';
+        }
+      };
+    }
+    card.appendChild(btn);
+    shopGridEl.appendChild(card);
+  }
+}
 
 function updateCoinHUD() {
   if (!coinTotalEl) return;

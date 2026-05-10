@@ -327,6 +327,60 @@
     #overlay .user-bar #adminBtn { border-color: #ffd54a; color: #ffd54a; }
     #overlay .user-bar #adminBtn:hover { background: #ffd54a; color: #000; }
 
+    /* Shop panel — owned items + buy buttons */
+    #shopPanel {
+      position: fixed; inset: 0;
+      display: flex; align-items: flex-start; justify-content: center;
+      background: rgba(8, 14, 28, 0.96); color: #fff; z-index: 220;
+      flex-direction: column; padding: 20px; gap: 14px;
+      direction: rtl; overflow-y: auto;
+    }
+    #shopPanel header {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; max-width: 960px; align-self: center;
+    }
+    #shopPanel h1 { font-size: 26px; color: #ffd54a; }
+    #shopPanel .balance {
+      background: rgba(255,213,74,0.15); border: 1px solid rgba(255,213,74,0.4);
+      color: #ffd54a; font-weight: bold; padding: 6px 14px; border-radius: 16px; font-size: 16px;
+    }
+    #shopPanel .panel-close {
+      font-size: 14px; padding: 8px 16px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.4); background: transparent; color: #fff; cursor: pointer;
+    }
+    #shopPanel .panel-close:hover { background: rgba(255,255,255,0.15); }
+    #shopPanel .shop-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px; width: 100%; max-width: 960px; align-self: center;
+    }
+    #shopPanel .shop-card {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px; padding: 14px;
+      display: flex; flex-direction: column; gap: 6px; text-align: center;
+    }
+    #shopPanel .shop-card .icon { font-size: 38px; line-height: 1; }
+    #shopPanel .shop-card .name { font-weight: bold; font-size: 16px; color: #ffd54a; }
+    #shopPanel .shop-card .desc { font-size: 12px; opacity: 0.85; min-height: 32px; }
+    #shopPanel .shop-card .cost {
+      background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 6px;
+      font-weight: bold; align-self: center;
+    }
+    #shopPanel .shop-card button {
+      padding: 8px 12px; font-size: 14px; border-radius: 6px; cursor: pointer;
+      background: #ffd54a; color: #000; border: 1px solid #ffd54a; font-weight: bold;
+    }
+    #shopPanel .shop-card button:hover { background: #fff5c2; }
+    #shopPanel .shop-card.owned        { border-color: #4caf50; opacity: 0.85; }
+    #shopPanel .shop-card.owned button { background: rgba(76,175,80,0.4); border-color: #4caf50; color: #c8ffd2; cursor: default; }
+    #shopPanel .shop-card.too-poor button {
+      background: rgba(255,255,255,0.05); color: #888; border-color: rgba(255,255,255,0.15); cursor: not-allowed;
+    }
+    #shopPanel .shop-card .kind {
+      font-size: 11px; opacity: 0.6; letter-spacing: 1px;
+    }
+    #shopPanel .shop-error { color: #ff7b6b; min-height: 18px; font-size: 13px; }
+
     /* Admin panel — full-screen modal listing all users */
     #adminPanel {
       position: fixed; inset: 0;
@@ -776,6 +830,11 @@
     <div class="slot" data-weapon="shotgun"><span class="key">4</span><span class="icon">💥</span><span class="name">רובה ציד</span><span class="ammo-mini" data-ammo="shotgun">8/8</span></div>
     <div class="slot" data-weapon="sword"><span class="key">5</span><span class="icon">⚔️</span><span class="name">חרב</span><span class="ammo-mini" data-ammo="sword">∞</span></div>
     <div class="slot" data-weapon="flamethrower"><span class="key">6</span><span class="icon">🔥</span><span class="name">להביור</span><span class="ammo-mini" data-ammo="flamethrower">100/100</span></div>
+    <div class="slot shop-weapon hidden" data-weapon="rpg"        data-shop="rpg"><span class="key">7</span><span class="icon">🚀</span><span class="name">RPG</span><span class="ammo-mini" data-ammo="rpg">1/1</span></div>
+    <div class="slot shop-weapon hidden" data-weapon="tommyGun"   data-shop="tommyGun"><span class="key">8</span><span class="icon">🪈</span><span class="name">תת-מקלע</span><span class="ammo-mini" data-ammo="tommyGun">50/50</span></div>
+    <div class="slot shop-weapon hidden" data-weapon="lightsaber" data-shop="lightsaber"><span class="key">9</span><span class="icon">🗡️</span><span class="name">חרב לייזר</span><span class="ammo-mini" data-ammo="lightsaber">∞</span></div>
+    <div class="slot shop-weapon hidden" data-weapon="crossbow"   data-shop="crossbow"><span class="key">0</span><span class="icon">🏹</span><span class="name">קשת</span><span class="ammo-mini" data-ammo="crossbow">1/1</span></div>
+    <div class="slot shop-weapon hidden" data-weapon="minigun"    data-shop="minigun"><span class="key">-</span><span class="icon">⚙️</span><span class="name">מיניגן</span><span class="ammo-mini" data-ammo="minigun">100/100</span></div>
   </div>
 
   <div id="scope"></div>
@@ -807,6 +866,7 @@
     <div class="user-bar">
       <span>שלום, <span class="name" id="userName">—</span></span>
       <span class="coins hidden" id="userCoins">💰 0</span>
+      <button id="shopBtn" class="hidden">🛒 חנות</button>
       <span class="admin-badge hidden" id="adminBadge">ADMIN</span>
       <button id="adminBtn" class="hidden">⚙️ ניהול</button>
       <button id="logoutBtn">התנתק</button>
@@ -882,6 +942,11 @@
       <button data-fav="shotgun"><span class="ico">💥</span><span>רובה ציד</span></button>
       <button data-fav="sword"><span class="ico">⚔️</span><span>חרב</span></button>
       <button data-fav="flamethrower"><span class="ico">🔥</span><span>להביור</span></button>
+      <button data-fav="rpg"        class="shop-fav hidden" data-shop="rpg"><span class="ico">🚀</span><span>RPG</span></button>
+      <button data-fav="tommyGun"   class="shop-fav hidden" data-shop="tommyGun"><span class="ico">🪈</span><span>תת-מקלע</span></button>
+      <button data-fav="lightsaber" class="shop-fav hidden" data-shop="lightsaber"><span class="ico">🗡️</span><span>חרב לייזר</span></button>
+      <button data-fav="crossbow"   class="shop-fav hidden" data-shop="crossbow"><span class="ico">🏹</span><span>קשת</span></button>
+      <button data-fav="minigun"    class="shop-fav hidden" data-shop="minigun"><span class="ico">⚙️</span><span>מיניגן</span></button>
     </div>
     <div class="quota-row">
       <label for="botTarget">מספר בוטים בשלב:</label>
@@ -906,6 +971,17 @@
   <div id="waitingForHost" class="hidden">
     ⏳ ממתין למארח להתחיל את המשחק...
     <div class="small">לחץ ESC כדי לחזור לתפריט</div>
+  </div>
+
+  <!-- Shop panel — opens for any logged-in user -->
+  <div id="shopPanel" class="hidden">
+    <header>
+      <h1>🛒 חנות</h1>
+      <span class="balance">💰 <span id="shopBalance">0</span></span>
+      <button class="panel-close" id="shopCloseBtn">✕ סגור</button>
+    </header>
+    <div class="shop-error" id="shopError">&nbsp;</div>
+    <div class="shop-grid" id="shopGrid"></div>
   </div>
 
   <!-- Admin panel — only opens for users with isAdmin=true -->
