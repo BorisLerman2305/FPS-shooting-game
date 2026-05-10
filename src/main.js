@@ -12,55 +12,101 @@ import { SHOP_ITEMS, SHOP_ORDER, isOwned } from './shop.js';
 
 // ─── Scene, camera, renderer ──────────────────────────────────────────────
 const scene = new THREE.Scene();
-// Minecraft sky is a single bright sky-blue, with fog tinted to match so
-// the world fades cleanly into the horizon. No gradient, no peach.
-const SKY_COLOR = new THREE.Color(0x88c1ff);
-const SKY_TOP = SKY_COLOR;
-const SKY_HORIZON = SKY_COLOR;
-scene.background = SKY_COLOR.clone();
-scene.fog = new THREE.Fog(0x88c1ff, 120, 380);
+// Sky is sky-blue overall but with a subtle vertical gradient — overhead
+// is a touch deeper, the horizon a touch lighter. Not enough to leave the
+// "Minecraft" feel, just enough to stop the screen looking flat-painted.
+const SKY_TOP     = new THREE.Color(0x6da9ec);
+const SKY_HORIZON = new THREE.Color(0xb8dcff);
+const SKY_COLOR   = SKY_HORIZON;       // legacy alias used elsewhere
+scene.background  = SKY_HORIZON.clone();
+// Fog tinted to the horizon colour so the world fades into the sky cleanly.
+scene.fog = new THREE.Fog(0xb8dcff, 110, 360);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200);
 camera.position.set(0, 1.7, 0); // eye height ~1.7m
 
-// Minecraft-style: hard pixel edges, no tone curves, unsoftened shadows.
-// AA stays on so geometry edges between blocks don't shimmer, but textures
-// are nearest-filtered (set elsewhere) so they read as pixel art.
+// Minecraft-flavoured but not flat: AA on, sharp shadows, mild ACES tone
+// mapping for vibrant skies + sun glow. Textures still nearest-filtered
+// for the blocky look; the tone curve only affects lighting.
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;            // crisper than PCFSoft
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.NoToneMapping;              // flat, untinted output
-renderer.toneMappingExposure = 1.0;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 document.getElementById('app').appendChild(renderer.domElement);
 
-// Minecraft-style sky: solid sky-blue background + a square white "sun"
-// quad. No gradient sphere; the scene.background colour does all the work.
+// Sky: vertex-coloured dome for the gradient + a real spherical sun with a
+// halo glow + a smaller moon on the opposite side + irregular cloud groups.
 function buildSkyDome() {
-  // Square pixel-art sun (a single white quad facing the camera)
-  const sunSize = 60;
-  const sunGeo = new THREE.PlaneGeometry(sunSize, sunSize);
-  const sunMat = new THREE.MeshBasicMaterial({ color: 0xfff4c4, fog: false, depthWrite: false });
-  const sun = new THREE.Mesh(sunGeo, sunMat);
+  // Gradient dome — top deep blue, horizon paler. BackSide so the player
+  // sees its inside; depth-write off so other sky objects sit on top.
+  const domeGeo = new THREE.SphereGeometry(700, 24, 16);
+  const positions = domeGeo.attributes.position;
+  const colors = new Float32Array(positions.count * 3);
+  for (let i = 0; i < positions.count; i++) {
+    const y = positions.getY(i);
+    const t = THREE.MathUtils.clamp((y + 80) / 480, 0, 1); // 0 at horizon, 1 at top
+    const c = SKY_HORIZON.clone().lerp(SKY_TOP, t);
+    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+  }
+  domeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const dome = new THREE.Mesh(
+    domeGeo,
+    new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
+  );
+  scene.add(dome);
+
+  // Sun — a glowing sphere (NOT a flat quad). Two layers: a bright core
+  // and a translucent halo. The bloom pass picks up the bright core.
+  const sun = new THREE.Group();
+  const sunCore = new THREE.Mesh(
+    new THREE.SphereGeometry(24, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xfff7d2, fog: false, depthWrite: false })
+  );
+  const sunHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(40, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xfff4a8, transparent: true, opacity: 0.35, fog: false, depthWrite: false })
+  );
+  sun.add(sunHalo, sunCore);
   sun.position.set(280, 420, -420);
-  sun.lookAt(0, 0, 0);
   scene.add(sun);
-  // A few drifting cloud BLOCKS at high altitude — pure Minecraft style
-  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, fog: false });
-  for (let i = 0; i < 12; i++) {
+
+  // Moon — on the opposite side of the sky for atmosphere
+  const moon = new THREE.Group();
+  const moonCore = new THREE.Mesh(
+    new THREE.SphereGeometry(14, 20, 20),
+    new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false, depthWrite: false })
+  );
+  const moonHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(22, 20, 20),
+    new THREE.MeshBasicMaterial({ color: 0xc8d6ee, transparent: true, opacity: 0.25, fog: false, depthWrite: false })
+  );
+  moon.add(moonHalo, moonCore);
+  moon.position.set(-260, 380, 380);
+  scene.add(moon);
+
+  // Cloud groups: ~6 cubes per cloud, irregular layout, softer opacity
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.78, fog: false });
+  for (let i = 0; i < 16; i++) {
     const cloud = new THREE.Group();
-    const cubes = 3 + Math.floor(Math.random() * 4);
+    const cubes = 5 + Math.floor(Math.random() * 5);
+    let xOff = 0, zOff = 0;
     for (let j = 0; j < cubes; j++) {
-      const cube = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 8), cloudMat);
-      cube.position.set(j * 8, 0, Math.floor(Math.random() * 3 - 1) * 8);
+      const w = 8 + Math.random() * 4;
+      const d = 8 + Math.random() * 4;
+      const cube = new THREE.Mesh(new THREE.BoxGeometry(w, 4, d), cloudMat);
+      cube.position.set(xOff, (Math.random() - 0.5) * 1.5, zOff);
       cloud.add(cube);
+      xOff += 5 + Math.random() * 5;
+      zOff += (Math.random() - 0.5) * 6;
     }
     cloud.position.set(
-      (Math.random() - 0.5) * 700,
-      150 + Math.random() * 40,
-      (Math.random() - 0.5) * 700
+      (Math.random() - 0.5) * 600,
+      150 + Math.random() * 50,
+      (Math.random() - 0.5) * 600
     );
     scene.add(cloud);
   }
@@ -73,11 +119,11 @@ const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  // Vanilla Minecraft has zero bloom — but a touch makes muzzle flashes,
-  // explosions, and the lightsaber blade glow without softening the world.
-  0.18,  // strength (was 0.55)
-  0.30,  // radius   (was 0.45)
-  0.92,  // threshold — only the very brightest pixels bloom
+  // A bit of bloom so the sun, muzzle flashes, lightsaber and explosions
+  // all glow — without softening the pixel-art world textures.
+  0.35,  // strength
+  0.40,  // radius
+  0.85,  // threshold
 );
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -160,169 +206,238 @@ function makeTexRng(seed) {
   };
 }
 
-function pixelCanvas(seed, draw) {
-  const c = document.createElement('canvas'); c.width = c.height = 16;
+function pixelCanvas(seed, size, draw) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
   const x = c.getContext('2d');
   x.imageSmoothingEnabled = false;
-  draw(x, makeTexRng(seed));
+  draw(x, makeTexRng(seed), size);
   return c;
 }
 
-// Grass top — bright green base, 4 darker speckles, a couple highlights
+// All textures are now 32×32 — quadruple the detail of the previous 16×16
+// tier without losing the chunky pixel-art feel.
+const TEX_SIZE = 32;
+
+// Grass top — irregular green field with bright tufts and dark patches
 function makeGrassTopTex() {
-  return pixelCanvas(101, (x, rng) => {
-    x.fillStyle = '#5fa845'; x.fillRect(0, 0, 16, 16);
-    const palette = ['#4a8e34', '#6fb84e', '#80c95a', '#3e7826', '#5fa845', '#5fa845'];
-    for (let i = 0; i < 110; i++) {
-      const px = Math.floor(rng() * 16), py = Math.floor(rng() * 16);
+  return pixelCanvas(101, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#5fa845'; x.fillRect(0, 0, S, S);
+    // Larger soft patches first (the "biome variation" feel)
+    for (let i = 0; i < 6; i++) {
+      const cx = Math.floor(rng() * S), cy = Math.floor(rng() * S);
+      const radius = 3 + Math.floor(rng() * 4);
+      const dark = rng() > 0.5;
+      for (let py = -radius; py <= radius; py++) {
+        for (let px = -radius; px <= radius; px++) {
+          if (px * px + py * py > radius * radius) continue;
+          if (rng() > 0.5) continue;
+          x.fillStyle = dark ? '#3e7826' : '#80c95a';
+          x.fillRect((cx + px + S) % S, (cy + py + S) % S, 1, 1);
+        }
+      }
+    }
+    // Per-pixel speckle
+    const palette = ['#4a8e34', '#6fb84e', '#80c95a', '#3e7826', '#5fa845', '#5fa845', '#5fa845'];
+    for (let i = 0; i < 320; i++) {
       x.fillStyle = palette[Math.floor(rng() * palette.length)];
-      x.fillRect(px, py, 1, 1);
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    }
+    // A few yellow flowers / dry patches
+    for (let i = 0; i < 4; i++) {
+      x.fillStyle = ['#e8c870', '#cf9d3a'][Math.floor(rng() * 2)];
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
     }
   });
 }
 
-// Grass side — top 4px is grass-edge, bottom 12px is dirt
+// Grass side — strip of grass on top, dirt below with a ragged transition
 function makeGrassSideTex() {
-  return pixelCanvas(102, (x, rng) => {
+  return pixelCanvas(102, TEX_SIZE, (x, rng, S) => {
     // Dirt body
-    x.fillStyle = '#866043'; x.fillRect(0, 0, 16, 16);
-    for (let i = 0; i < 140; i++) {
-      const px = Math.floor(rng() * 16), py = 4 + Math.floor(rng() * 12);
-      x.fillStyle = ['#6f4d33', '#9a7150', '#5e4128', '#866043'][Math.floor(rng() * 4)];
-      x.fillRect(px, py, 1, 1);
+    x.fillStyle = '#866043'; x.fillRect(0, 0, S, S);
+    for (let i = 0; i < 380; i++) {
+      const py = 6 + Math.floor(rng() * (S - 6));
+      x.fillStyle = ['#6f4d33', '#9a7150', '#5e4128', '#866043', '#7a5638'][Math.floor(rng() * 5)];
+      x.fillRect(Math.floor(rng() * S), py, 1, 1);
     }
-    // Grass overhang on top — irregular drip pattern
-    for (let px = 0; px < 16; px++) {
-      const drop = Math.floor(rng() * 3); // 0-2 px of grass below the strip
+    // Ragged grass overhang
+    for (let px = 0; px < S; px++) {
+      const drop = Math.floor(rng() * 5); // 0-4 px of irregular grass drip
+      const stripH = 5 + drop;
       x.fillStyle = '#5fa845';
-      x.fillRect(px, 0, 1, 3 + drop);
-      // Speckle the grass strip
-      if (rng() > 0.5) { x.fillStyle = '#4a8e34'; x.fillRect(px, Math.floor(rng() * 3), 1, 1); }
+      x.fillRect(px, 0, 1, stripH);
+      // Speckle the grass band
+      if (rng() > 0.4) {
+        x.fillStyle = ['#4a8e34', '#80c95a', '#3e7826'][Math.floor(rng() * 3)];
+        x.fillRect(px, Math.floor(rng() * stripH), 1, 1);
+      }
     }
   });
 }
 
 function makeDirtTex() {
-  return pixelCanvas(103, (x, rng) => {
-    x.fillStyle = '#866043'; x.fillRect(0, 0, 16, 16);
-    const pal = ['#6f4d33', '#9a7150', '#5e4128', '#7a5638', '#866043'];
-    for (let i = 0; i < 140; i++) {
-      const px = Math.floor(rng() * 16), py = Math.floor(rng() * 16);
+  return pixelCanvas(103, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#866043'; x.fillRect(0, 0, S, S);
+    const pal = ['#6f4d33', '#9a7150', '#5e4128', '#7a5638', '#866043', '#9a7150', '#866043'];
+    for (let i = 0; i < 460; i++) {
       x.fillStyle = pal[Math.floor(rng() * pal.length)];
-      x.fillRect(px, py, 1, 1);
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    }
+    // A few tiny pebbles
+    for (let i = 0; i < 8; i++) {
+      x.fillStyle = '#3a2a14';
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
     }
   });
 }
 
-// Oak log — vertical bark stripes
+// Oak log — vertical bark with deeper grooves
 function makeLogSideTex() {
-  return pixelCanvas(104, (x, rng) => {
-    x.fillStyle = '#5d4423'; x.fillRect(0, 0, 16, 16);
-    // Vertical grain stripes
-    for (let px = 0; px < 16; px++) {
-      x.fillStyle = px % 4 === 0 ? '#3a2a14' : (px % 4 === 2 ? '#6e5230' : '#5d4423');
-      x.fillRect(px, 0, 1, 16);
+  return pixelCanvas(104, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#5d4423'; x.fillRect(0, 0, S, S);
+    for (let px = 0; px < S; px++) {
+      const m = px % 8;
+      x.fillStyle = (m === 0 || m === 1) ? '#3a2a14'
+                : (m === 4 || m === 5)   ? '#6e5230'
+                : '#5d4423';
+      x.fillRect(px, 0, 1, S);
     }
-    // Pixel knots
-    for (let i = 0; i < 8; i++) {
+    // Pixel knots + horizontal cracks
+    for (let i = 0; i < 22; i++) {
       x.fillStyle = '#2c1f10';
-      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    }
+    for (let i = 0; i < 5; i++) {
+      const cy = Math.floor(rng() * S);
+      const len = 4 + Math.floor(rng() * 8);
+      x.fillStyle = '#3a2a14';
+      x.fillRect(Math.floor(rng() * (S - len)), cy, len, 1);
     }
   });
 }
 function makeLogTopTex() {
-  return pixelCanvas(105, (x, rng) => {
-    x.fillStyle = '#a17a48'; x.fillRect(0, 0, 16, 16);
-    // Concentric ring rough pattern
-    const cx = 8, cy = 8;
-    for (let py = 0; py < 16; py++) {
-      for (let px = 0; px < 16; px++) {
+  return pixelCanvas(105, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#a17a48'; x.fillRect(0, 0, S, S);
+    const cx = S / 2, cy = S / 2;
+    for (let py = 0; py < S; py++) {
+      for (let px = 0; px < S; px++) {
         const d = Math.round(Math.hypot(px - cx, py - cy));
-        if (d % 3 === 0) { x.fillStyle = '#7a5832'; x.fillRect(px, py, 1, 1); }
+        if (d % 4 === 0) { x.fillStyle = '#7a5832'; x.fillRect(px, py, 1, 1); }
+        else if (d % 4 === 1 && rng() > 0.7) { x.fillStyle = '#8e6839'; x.fillRect(px, py, 1, 1); }
+      }
+    }
+    // Centre dot
+    x.fillStyle = '#3a2a14';
+    x.fillRect(cx - 1, cy - 1, 2, 2);
+  });
+}
+
+// Wood planks — 4 horizontal rows with kerf marks and grain
+function makePlanksTex() {
+  return pixelCanvas(106, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#a07246'; x.fillRect(0, 0, S, S);
+    const rowH = S / 4;
+    const tones = ['#a07246', '#8e6438', '#a87a4e', '#956a3c'];
+    for (let row = 0; row < 4; row++) {
+      const y = row * rowH;
+      x.fillStyle = tones[row];
+      x.fillRect(0, y, S, rowH);
+      x.fillStyle = '#5a3a1f';
+      x.fillRect(0, y, S, 1);
+      // Plank kerf cuts at staggered x positions
+      const kerfX = ((row * 11) + 4) % S;
+      x.fillStyle = '#5a3a1f';
+      x.fillRect(kerfX, y, 1, rowH);
+      // Grain wisps
+      for (let i = 0; i < 14; i++) {
+        x.fillStyle = '#7a4f24';
+        const gx = Math.floor(rng() * S), gy = y + 1 + Math.floor(rng() * (rowH - 2));
+        const len = 2 + Math.floor(rng() * 5);
+        x.fillRect(gx, gy, len, 1);
       }
     }
   });
 }
 
-// Wood planks — horizontal slats with vertical kerf cuts
-function makePlanksTex() {
-  return pixelCanvas(106, (x, rng) => {
-    x.fillStyle = '#a07246'; x.fillRect(0, 0, 16, 16);
-    // 4 horizontal plank rows, 4px tall each
-    for (let row = 0; row < 4; row++) {
-      const y = row * 4;
-      const tone = ['#a07246', '#8e6438', '#a87a4e', '#956a3c'][row];
-      x.fillStyle = tone; x.fillRect(0, y, 16, 4);
-      // Plank divider line
-      x.fillStyle = '#5a3a1f'; x.fillRect(0, y, 16, 1);
-      // Kerf cuts at staggered x positions
-      const kerfX = (row * 5) % 16;
-      x.fillStyle = '#5a3a1f';
-      x.fillRect(kerfX, y, 1, 4);
-    }
-    // Pixel grain noise
-    for (let i = 0; i < 18; i++) {
-      x.fillStyle = '#5a3a1f';
-      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
-    }
-  });
-}
-
-// Leaves — dense dark green with darker stipple
+// Leaves — alpha-style stippled green with see-through gaps for depth
 function makeLeavesTex() {
-  return pixelCanvas(107, (x, rng) => {
-    x.fillStyle = '#3a8b2a'; x.fillRect(0, 0, 16, 16);
-    const pal = ['#2c6b1f', '#4ea235', '#256818', '#3a8b2a', '#3a8b2a'];
-    for (let i = 0; i < 130; i++) {
+  return pixelCanvas(107, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#3a8b2a'; x.fillRect(0, 0, S, S);
+    const pal = ['#2c6b1f', '#4ea235', '#256818', '#3a8b2a', '#3a8b2a', '#558f3d'];
+    for (let i = 0; i < 380; i++) {
       x.fillStyle = pal[Math.floor(rng() * pal.length)];
-      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    }
+    // A handful of darker "shadow holes"
+    for (let i = 0; i < 18; i++) {
+      x.fillStyle = '#1a4012';
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
     }
   });
 }
 
-// Stone — gray with small darker pixels
+// Stone — varied gray with cracks
 function makeStoneTex() {
-  return pixelCanvas(108, (x, rng) => {
-    x.fillStyle = '#7a7a7e'; x.fillRect(0, 0, 16, 16);
-    const pal = ['#666669', '#8a8a8e', '#5d5d61', '#9a9a9e', '#7a7a7e'];
-    for (let i = 0; i < 140; i++) {
+  return pixelCanvas(108, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#7a7a7e'; x.fillRect(0, 0, S, S);
+    const pal = ['#666669', '#8a8a8e', '#5d5d61', '#9a9a9e', '#7a7a7e', '#7a7a7e'];
+    for (let i = 0; i < 480; i++) {
       x.fillStyle = pal[Math.floor(rng() * pal.length)];
-      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    }
+    // Hairline cracks — pixel-stepped polylines
+    x.fillStyle = '#3a3a3e';
+    for (let i = 0; i < 4; i++) {
+      let cx = Math.floor(rng() * S), cy = Math.floor(rng() * S);
+      const len = 6 + Math.floor(rng() * 8);
+      for (let s = 0; s < len; s++) {
+        x.fillRect(cx, cy, 1, 1);
+        cx += Math.random() > 0.5 ? 1 : -1;
+        cy += Math.random() > 0.5 ? 1 : 0;
+        cx = (cx + S) % S; cy = (cy + S) % S;
+      }
     }
   });
 }
 
-// Cobblestone — chunky stone blobs separated by darker mortar
+// Cobblestone — chunky individually-stippled stones with mortar grout
 function makeCobblestoneTex() {
-  return pixelCanvas(109, (x, rng) => {
-    x.fillStyle = '#3a3a3e'; x.fillRect(0, 0, 16, 16); // mortar
+  return pixelCanvas(109, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#3a3a3e'; x.fillRect(0, 0, S, S); // mortar
+    // Predefined block layout scaled to 32×32
     const blobs = [
-      [0, 0, 6, 5], [7, 0, 5, 4], [13, 0, 3, 5],
-      [0, 6, 4, 5], [5, 5, 6, 6], [12, 6, 4, 5],
-      [0, 12, 7, 4], [8, 12, 4, 4], [13, 12, 3, 4],
+      [0, 0, 12, 10], [13, 0, 10, 8], [24, 0, 8, 10],
+      [0, 11, 8, 10], [9, 9, 12, 12], [22, 11, 10, 10],
+      [0, 22, 14, 10], [15, 22, 9, 10], [25, 22, 7, 10],
     ];
     for (const [bx, by, bw, bh] of blobs) {
       x.fillStyle = '#7a7a7e'; x.fillRect(bx, by, bw, bh);
-      // Stipple
-      for (let i = 0; i < 4; i++) {
-        x.fillStyle = ['#666669', '#8a8a8e', '#5d5d61'][Math.floor(rng() * 3)];
+      for (let i = 0; i < 18; i++) {
+        x.fillStyle = ['#666669', '#8a8a8e', '#5d5d61', '#9a9a9e'][Math.floor(rng() * 4)];
         x.fillRect(bx + Math.floor(rng() * bw), by + Math.floor(rng() * bh), 1, 1);
       }
+      // 1-px highlight on the top edge for fake bevel
+      x.fillStyle = '#a8a8ac';
+      x.fillRect(bx, by, bw, 1);
     }
   });
 }
 
-// Fence-plank wall — vertical planks
+// Fence-plank wall — vertical planks, deeper grooves
 function makeWallPlanksTex() {
-  return pixelCanvas(110, (x, rng) => {
-    x.fillStyle = '#7a5638'; x.fillRect(0, 0, 16, 16);
-    for (let px = 0; px < 16; px++) {
-      x.fillStyle = px % 4 === 0 ? '#3a2818' : (px % 4 === 2 ? '#9a7150' : '#7a5638');
-      x.fillRect(px, 0, 1, 16);
+  return pixelCanvas(110, TEX_SIZE, (x, rng, S) => {
+    x.fillStyle = '#7a5638'; x.fillRect(0, 0, S, S);
+    for (let px = 0; px < S; px++) {
+      const m = px % 8;
+      x.fillStyle = (m === 0 || m === 1) ? '#3a2818'
+                : (m === 4 || m === 5)   ? '#9a7150'
+                : '#7a5638';
+      x.fillRect(px, 0, 1, S);
     }
-    for (let i = 0; i < 18; i++) {
+    // Random dark knots
+    for (let i = 0; i < 24; i++) {
       x.fillStyle = '#3a2818';
-      x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
+      x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
     }
   });
 }
@@ -517,6 +632,55 @@ function makeCrate(x, z, size = 1) {
   colliders.push({ mesh: crate, box });
 }
 
+// ─── Flowers + tall grass — flat decorations on the ground ──────────────
+// Two crossed billboards per flower so they read from any angle, just
+// like Minecraft renders its flora. No collider — purely visual.
+function makeFlowerTex(seed, baseColor, petalColor, centerColor) {
+  return makePixelTexture(pixelCanvas(seed, 16, (x, rng, S) => {
+    x.clearRect(0, 0, S, S);
+    // Stem
+    x.fillStyle = '#3a8b2a';
+    for (let py = 8; py < 16; py++) x.fillRect(7, py, 2, 1);
+    // Petals — 4 around a center pixel
+    const cx = 8, cy = 5;
+    x.fillStyle = petalColor;
+    x.fillRect(cx - 1, cy - 2, 2, 2);
+    x.fillRect(cx + 1, cy - 1, 2, 2);
+    x.fillRect(cx - 1, cy + 1, 2, 2);
+    x.fillRect(cx - 3, cy - 1, 2, 2);
+    // Center
+    x.fillStyle = centerColor;
+    x.fillRect(cx - 1, cy - 1, 2, 2);
+    // A small leaf on the stem
+    x.fillStyle = '#256818';
+    x.fillRect(5, 11, 2, 1);
+  }), 1);
+}
+
+const FLOWER_TEXS = [
+  makeFlowerTex(701, '', '#e84a4a', '#ffd54a'), // poppy red
+  makeFlowerTex(702, '', '#ffd54a', '#a47020'), // dandelion yellow
+  makeFlowerTex(703, '', '#a07ad8', '#ffd54a'), // allium purple
+  makeFlowerTex(704, '', '#e8e8e8', '#ffd54a'), // oxeye white
+];
+// Need transparent backgrounds — set alpha test on each material
+const FLOWER_MATS = FLOWER_TEXS.map(t => new THREE.MeshBasicMaterial({
+  map: t, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide, fog: true,
+}));
+
+function makeFlower(x, z) {
+  // Two crossed quads → readable from any angle, like Minecraft flora
+  const mat = FLOWER_MATS[Math.floor(Math.random() * FLOWER_MATS.length)];
+  const flower = new THREE.Group();
+  const planeA = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), mat);
+  const planeB = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), mat);
+  planeA.position.y = 0.35;
+  planeB.position.y = 0.35; planeB.rotation.y = Math.PI / 2;
+  flower.add(planeA, planeB);
+  flower.position.set(x, 0, z);
+  scene.add(flower); addArenaMesh(flower);
+}
+
 // ─── Block-style hut: plank walls + stepped pyramid roof ─────────────────
 function makeHut(x, z) {
   const roofPalette = [0xc23b3b, 0x4a73c2, 0x3aa18a, 0xc28a3a];
@@ -667,8 +831,8 @@ function buildArena(size) {
   // handles the rest at runtime.
   const isBig = size >= 100;
   const counts = isBig
-    ? { trees: 80, rocks: 60, crates: 50, huts: 12, lakes: 3, caves: 2, ruins: 3, landmarks: 6 }
-    : { trees: 14, rocks: 12, crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0 };
+    ? { trees: 80, rocks: 60, crates: 50, huts: 12, lakes: 3, caves: 2, ruins: 3, landmarks: 6, flowers: 60 }
+    : { trees: 14, rocks: 12, crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0, flowers: 14 };
 
   // Special structures FIRST — they're chunkier and reserve a larger area
   for (let i = 0; i < counts.lakes; i++) {
@@ -749,6 +913,14 @@ function buildArena(size) {
     const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
     if (!tryPlace(x, z, 4)) continue;
     makeRock(x, z, 3 + Math.random() * 2);
+  }
+  // Flowers — purely decorative, no collider, scatter across the grass
+  for (let i = 0; i < counts.flowers; i++) {
+    const x = (Math.random() - 0.5) * (ARENA * 1.7);
+    const z = (Math.random() - 0.5) * (ARENA * 1.7);
+    if (Math.hypot(x, z) < 6) continue;
+    if (isInsideObstacle(x, z)) continue;
+    makeFlower(x, z);
   }
 
   // Restore the real Math.random for runtime systems
@@ -1722,24 +1894,48 @@ const BOT_PALETTES = [
   { body: 0xb8c25d, accent: 0x6f4226, head: 0xf2cbac, eyes: 0x111111 }, // farmer
 ];
 
-// Pixel face texture for bot heads — eyes + mouth, drawn on a 16×16
-// canvas so the look reads instantly as Minecraft.
+// Pixel face for bot heads — drawn on a 32×32 canvas for richer features
+// (brows, nose shading, beard, mouth dimple). Still reads as Minecraft.
 function makeBotFaceTex(skin, eyes) {
-  return makePixelTexture(pixelCanvas(200 + Math.floor(Math.random() * 1000), (x, rng) => {
+  return makePixelTexture(pixelCanvas(200 + Math.floor(Math.random() * 1000), 32, (x, rng, S) => {
     // Skin base
-    x.fillStyle = skin; x.fillRect(0, 0, 16, 16);
-    // Slight pixel speckle for a hand-drawn feel
-    x.fillStyle = 'rgba(0,0,0,0.10)';
-    for (let i = 0; i < 12; i++) x.fillRect(Math.floor(rng() * 16), Math.floor(rng() * 16), 1, 1);
-    // Two eyes — 2×2 each
+    x.fillStyle = skin; x.fillRect(0, 0, S, S);
+    // Subtle skin tone variation — pixels here and there
+    x.fillStyle = 'rgba(0,0,0,0.07)';
+    for (let i = 0; i < 60; i++) x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    x.fillStyle = 'rgba(255,255,255,0.06)';
+    for (let i = 0; i < 30; i++) x.fillRect(Math.floor(rng() * S), Math.floor(rng() * S), 1, 1);
+    // Eyebrows — dark slash above each eye
+    x.fillStyle = '#3a2818';
+    x.fillRect(7, 11, 6, 1);
+    x.fillRect(19, 11, 6, 1);
+    // Eye whites — 4×3 boxes
     x.fillStyle = '#ffffff';
-    x.fillRect(3, 7, 3, 2);
-    x.fillRect(10, 7, 3, 2);
+    x.fillRect(7, 13, 6, 4);
+    x.fillRect(19, 13, 6, 4);
+    // Pupils — 2×3 each, on the inner side of each eye for a "looking forward" feel
     x.fillStyle = eyes;
-    x.fillRect(4, 7, 1, 2); x.fillRect(11, 7, 1, 2);
-    // Mouth — flat line with a small dimple
-    x.fillStyle = '#5a3a1f';
-    x.fillRect(6, 12, 5, 1);
+    x.fillRect(9, 14, 2, 3);
+    x.fillRect(21, 14, 2, 3);
+    // Nose — lighter shading vertical strip
+    x.fillStyle = 'rgba(0,0,0,0.10)';
+    x.fillRect(15, 17, 2, 4);
+    // Nostrils
+    x.fillStyle = 'rgba(0,0,0,0.30)';
+    x.fillRect(14, 21, 1, 1);
+    x.fillRect(17, 21, 1, 1);
+    // Mouth — flat closed line with raised corners
+    x.fillStyle = '#3a2818';
+    x.fillRect(11, 24, 10, 1);
+    x.fillRect(10, 23, 1, 1);
+    x.fillRect(21, 23, 1, 1);
+    // Tiny stubble / beard hint (random per face)
+    if (rng() > 0.5) {
+      x.fillStyle = 'rgba(60,40,20,0.45)';
+      for (let i = 0; i < 18; i++) {
+        x.fillRect(8 + Math.floor(rng() * 16), 25 + Math.floor(rng() * 4), 1, 1);
+      }
+    }
   }), 1);
 }
 
