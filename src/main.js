@@ -408,9 +408,9 @@ function addBox(w, h, d, x, y, z, mat) {
 }
 
 // Two map sizes the player can play on:
-//   BIG_ARENA   — the open 600×600m field used in solo + co-op modes
+//   BIG_ARENA   — the open 450×450m field used in solo + co-op modes
 //   SMALL_ARENA — original 100×100m playfield, used for PvP duels
-const BIG_ARENA = 300;
+const BIG_ARENA = 225;
 const SMALL_ARENA = 50;
 let ARENA = BIG_ARENA; // current arena, mutated by buildArena()
 
@@ -663,12 +663,12 @@ function buildArena(size) {
   addBox(1, 4, ARENA * 2, -ARENA, 2, 0, shortSide);
 
   // Density scales with arena area. Block-style trees are ~30 meshes each
-  // (trunk column + leaf cluster) so we halve the count to keep draw calls
-  // manageable. Frustum culling handles the rest at runtime.
+  // (trunk column + leaf cluster) so we keep counts modest. Frustum culling
+  // handles the rest at runtime.
   const isBig = size >= 100;
   const counts = isBig
-    ? { trees: 130, rocks: 100, crates: 80, huts: 18, lakes: 4, caves: 3, ruins: 4, landmarks: 8 }
-    : { trees: 14,  rocks: 12,  crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0 };
+    ? { trees: 80, rocks: 60, crates: 50, huts: 12, lakes: 3, caves: 2, ruins: 3, landmarks: 6 }
+    : { trees: 14, rocks: 12, crates: 12, huts: 4,  lakes: 1, caves: 1, ruins: 1, landmarks: 0 };
 
   // Special structures FIRST — they're chunkier and reserve a larger area
   for (let i = 0; i < counts.lakes; i++) {
