@@ -550,6 +550,25 @@
       box-shadow: 0 0 12px rgba(255,213,74,0.5);
     }
 
+    /* C: map / world picker */
+    #overlay .map-pick-label { font-size: 16px; opacity: 0.85; margin-top: 12px; }
+    #overlay .map-picks {
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 4px 0 4px;
+    }
+    #overlay .map-picks button {
+      min-width: 88px; padding: 8px 12px; font-size: 14px;
+      background: rgba(30,40,55,0.85); color: #fff; border: 2px solid #455;
+      border-radius: 8px; cursor: pointer;
+    }
+    #overlay .map-picks button.active {
+      background: #4ac1ff; color: #001020; border-color: #4ac1ff;
+      box-shadow: 0 0 12px rgba(74,193,255,0.5);
+    }
+    #overlay .map-picks button[data-map="desert"].active { background: #f0c25a; border-color: #f0c25a; box-shadow: 0 0 12px rgba(240,194,90,0.5); }
+    #overlay .map-picks button[data-map="snow"].active   { background: #cfe1f2; border-color: #cfe1f2; box-shadow: 0 0 12px rgba(207,225,242,0.5); }
+    #overlay .map-picks button[data-map="nether"].active { background: #d44a2a; border-color: #d44a2a; box-shadow: 0 0 12px rgba(212,74,42,0.5); }
+    #overlay .map-picks button[data-map="forest"].active { background: #6bbf4a; border-color: #6bbf4a; box-shadow: 0 0 12px rgba(107,191,74,0.5); }
+
     /* Game-over / victory overlays */
     #gameOver, #victory {
       position: fixed; inset: 0;
@@ -1044,6 +1063,13 @@
       <input type="number" id="botTarget" min="1" max="200" value="25" />
     </div>
     <div class="quota-hint">ברירות מחדל לפי קושי: קל=10 · בינוני=25 · קשה=50 (1-200)</div>
+    <div class="map-pick-label">בחר עולם:</div>
+    <div class="map-picks" id="mapPicks">
+      <button data-map="forest" class="active">🌳 יער</button>
+      <button data-map="desert">🏜️ מדבר</button>
+      <button data-map="snow">❄️ שלג</button>
+      <button data-map="nether">🔥 נתר</button>
+    </div>
     <div class="pick">בחר רמת קושי כדי להתחיל:</div>
     <div class="difficulty">
       <button data-diff="easy">קל</button>

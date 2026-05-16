@@ -325,10 +325,14 @@ function tickDayCycle(dt) {
   // Stars: only visible at night
   if (starsMesh) starsMesh.material.opacity = THREE.MathUtils.clamp((1 - aboveHorizon) - 0.2, 0, 0.9);
 
-  // Sky tint + fog
-  if (skyDomeMat) skyDomeMat.color.copy(phase.skyTint);
-  scene.background.copy(phase.skyTint);
-  scene.fog.color.copy(phase.fog);
+  // Sky tint + fog (multiplied by the active map theme so a Nether arena
+  // looks crimson, snow looks washed-out, etc.)
+  const theme = getTheme();
+  const themeSky = new THREE.Color(theme.skyTint);
+  const themeFog = new THREE.Color(theme.fogTint);
+  if (skyDomeMat) skyDomeMat.color.copy(phase.skyTint).multiply(themeSky);
+  scene.background.copy(phase.skyTint).multiply(themeSky);
+  scene.fog.color.copy(phase.fog).multiply(themeFog);
 
   // Lights
   hemi.color.copy(phase.hemiSky);
@@ -777,6 +781,33 @@ const BIG_ARENA = 225;
 const SMALL_ARENA = 50;
 let ARENA = BIG_ARENA; // current arena, mutated by buildArena()
 
+// ─── C: map themes ───────────────────────────────────────────────────────
+// A theme repaints the same arena geometry with a different biome palette:
+// ground tint, sky/fog tint, scenery type (oak/cactus/pine/dead), rock tint
+// and whether flowers spawn. The arena layout (positions, counts) stays the
+// same — only the visuals + scenery type change so PvP cover is consistent.
+const MAP_THEMES = {
+  forest: {
+    label: '🌳 יער', groundTint: 0xffffff, skyTint: 0xffffff, fogTint: 0xffffff,
+    rockTint: 0xffffff, treeKind: 'oak',    flowers: true,
+  },
+  desert: {
+    label: '🏜️ מדבר', groundTint: 0xd9b87a, skyTint: 0xffe8b0, fogTint: 0xe8c898,
+    rockTint: 0xc89868, treeKind: 'cactus', flowers: false,
+  },
+  snow: {
+    label: '❄️ שלג',  groundTint: 0xe8f1ff, skyTint: 0xdce5f0, fogTint: 0xe6ecf2,
+    rockTint: 0xcfd6e0, treeKind: 'pine',   flowers: false,
+  },
+  nether: {
+    label: '🔥 נתר',  groundTint: 0x9a3a2a, skyTint: 0xff5030, fogTint: 0x6a1c0c,
+    rockTint: 0x7a2a18, treeKind: 'dead',   flowers: false,
+  },
+};
+const DEFAULT_THEME = 'forest';
+let currentTheme = DEFAULT_THEME;
+function getTheme() { return MAP_THEMES[currentTheme] || MAP_THEMES[DEFAULT_THEME]; }
+
 const wallMat = new THREE.MeshStandardMaterial({ map: TEX_WALL.clone(), roughness: 0.85 });
 
 // Object positions are tracked so scenery doesn't stack. Cleared on rebuild.
@@ -843,11 +874,160 @@ function makeTree(x, z, scale = 1) {
   };
 }
 
+// ─── C: themed tree variants ─────────────────────────────────────────────
+// Each variant pushes the same kind of destructible record so the rest of
+// the game (bullet hits, collapse animation) doesn't need to know about them.
+const _cactusBodyMat = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
+const _cactusArmMat  = new THREE.MeshLambertMaterial({ color: 0x2f6a2f });
+const _pineLeafMat   = new THREE.MeshLambertMaterial({ color: 0x244d2a });
+const _deadLogMats = [
+  new THREE.MeshLambertMaterial({ color: 0x2a1612 }),
+  new THREE.MeshLambertMaterial({ color: 0x2a1612 }),
+  new THREE.MeshLambertMaterial({ color: 0x1a0808 }),
+  new THREE.MeshLambertMaterial({ color: 0x1a0808 }),
+  new THREE.MeshLambertMaterial({ color: 0x2a1612 }),
+  new THREE.MeshLambertMaterial({ color: 0x2a1612 }),
+];
+
+function makeCactus(x, z, scale = 1) {
+  // Tall slim green column + optional side arms
+  const height = Math.max(3, Math.round(3 + scale));
+  const parts = [];
+  let base = null;
+  for (let h = 0; h < height; h++) {
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1, 0.9), _cactusBodyMat);
+    seg.position.set(x, 0.5 + h, z);
+    seg.castShadow = true; seg.receiveShadow = true;
+    scene.add(seg); addArenaMesh(seg);
+    parts.push(seg);
+    if (h === 0) base = seg;
+  }
+  // Two small arms branching out
+  if (height >= 3) {
+    const armY = 1.5 + Math.random();
+    const offsets = [[1.0, 0], [-1.0, 0]];
+    for (const [ox, oz] of offsets) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, 0.6), _cactusArmMat);
+      arm.position.set(x + ox, armY, z + oz);
+      arm.castShadow = true; arm.receiveShadow = true;
+      scene.add(arm); addArenaMesh(arm);
+      parts.push(arm);
+    }
+  }
+  const box = new THREE.Box3().setFromObject(base);
+  box.max.y += height - 1;
+  box.expandByScalar(0.05);
+  colliders.push({ mesh: base, box });
+  base.userData.destructible = {
+    hp: 2, connected: parts.filter(p => p !== base), kind: 'cactus',
+  };
+}
+
+function makePine(x, z, scale = 1) {
+  // Taller trunk + cone-shaped dark green canopy (wider at the bottom)
+  const trunkHeight = Math.round(4 + scale * 2);
+  const parts = [];
+  let trunkBase = null;
+  for (let h = 0; h < trunkHeight; h++) {
+    const log = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _logFaceMats);
+    log.position.set(x, 0.5 + h, z);
+    log.castShadow = true; log.receiveShadow = true;
+    scene.add(log); addArenaMesh(log);
+    parts.push(log);
+    if (h === 0) trunkBase = log;
+  }
+  // Cone canopy: 4 layers, each smaller than the one below it
+  const layers = [
+    { r: 2, y: trunkHeight - 1 },
+    { r: 2, y: trunkHeight },
+    { r: 1, y: trunkHeight + 1 },
+    { r: 1, y: trunkHeight + 2 },
+  ];
+  for (const layer of layers) {
+    for (let dx = -layer.r; dx <= layer.r; dx++) {
+      for (let dz = -layer.r; dz <= layer.r; dz++) {
+        if (layer.r === 2 && Math.abs(dx) === 2 && Math.abs(dz) === 2 && Math.random() > 0.4) continue;
+        const leaf = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _pineLeafMat);
+        leaf.position.set(x + dx, layer.y + 0.5, z + dz);
+        leaf.castShadow = true; leaf.receiveShadow = true;
+        // Sprinkle a bit of snow on top — top-only layer of brighter material
+        scene.add(leaf); addArenaMesh(leaf);
+        parts.push(leaf);
+      }
+    }
+  }
+  // White cap on the tip — looks snowy
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(1, 0.4, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+  cap.position.set(x, trunkHeight + 2.7, z);
+  scene.add(cap); addArenaMesh(cap);
+  parts.push(cap);
+  const box = new THREE.Box3().setFromObject(trunkBase);
+  box.max.y += trunkHeight - 1;
+  box.expandByScalar(0.05);
+  colliders.push({ mesh: trunkBase, box });
+  trunkBase.userData.destructible = {
+    hp: 3, connected: parts.filter(p => p !== trunkBase), kind: 'pine',
+  };
+}
+
+function makeDeadTree(x, z, scale = 1) {
+  // Charred Nether-style stump — just a leaf-less log column, dark crimson
+  const trunkHeight = Math.round(3 + scale * 1.2);
+  const parts = [];
+  let trunkBase = null;
+  for (let h = 0; h < trunkHeight; h++) {
+    const log = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _deadLogMats);
+    log.position.set(x, 0.5 + h, z);
+    log.castShadow = true; log.receiveShadow = true;
+    scene.add(log); addArenaMesh(log);
+    parts.push(log);
+    if (h === 0) trunkBase = log;
+  }
+  // A jagged stump-top: tilt the last log
+  const top = parts[parts.length - 1];
+  top.rotation.z = (Math.random() - 0.5) * 0.4;
+  const box = new THREE.Box3().setFromObject(trunkBase);
+  box.max.y += trunkHeight - 1;
+  box.expandByScalar(0.05);
+  colliders.push({ mesh: trunkBase, box });
+  trunkBase.userData.destructible = {
+    hp: 2, connected: parts.filter(p => p !== trunkBase), kind: 'dead',
+  };
+}
+
+// Dispatch a "tree" call to the right variant for the active theme.
+function makeThemedTree(x, z, scale) {
+  switch (getTheme().treeKind) {
+    case 'cactus': return makeCactus(x, z, scale);
+    case 'pine':   return makePine(x, z, scale);
+    case 'dead':   return makeDeadTree(x, z, scale);
+    default:       return makeTree(x, z, scale);
+  }
+}
+
 // ─── Block-style rocks: small clusters of stone cubes ────────────────────
+// Lazily-built theme-tinted rock materials, keyed by tint colour. The base
+// _stoneBlockMat / _cobbleBlockMat are reused for the default forest tint so
+// the GPU still shares them across the common case.
+const _themedRockMats = new Map();
+function getRockMats(tint) {
+  if (tint === 0xffffff) return [_stoneBlockMat, _cobbleBlockMat];
+  let pair = _themedRockMats.get(tint);
+  if (!pair) {
+    pair = [
+      new THREE.MeshLambertMaterial({ map: TEX_STONE,  color: tint }),
+      new THREE.MeshLambertMaterial({ map: TEX_COBBLE, color: tint }),
+    ];
+    _themedRockMats.set(tint, pair);
+  }
+  return pair;
+}
+
 function makeRock(x, z, scale = 1) {
   const cubes = Math.max(1, Math.round(1 + scale * 1.5));
   let rep = null;
   const cluster = [];
+  const [stoneMat, cobbleMat] = getRockMats(getTheme().rockTint);
   for (let i = 0; i < cubes; i++) {
     const sz = 0.7 + Math.random() * 0.6 + scale * 0.3;
     const ox = (Math.random() - 0.5) * 1.2 * scale;
@@ -856,7 +1036,7 @@ function makeRock(x, z, scale = 1) {
     const useCobble = Math.random() > 0.5;
     const stone = new THREE.Mesh(
       new THREE.BoxGeometry(sz, sz, sz),
-      useCobble ? _cobbleBlockMat : _stoneBlockMat
+      useCobble ? cobbleMat : stoneMat
     );
     stone.position.set(x + ox, oy, z + oz);
     stone.castShadow = true; stone.receiveShadow = true;
@@ -1054,10 +1234,17 @@ function makeRuin(x, z) {
   colliders.push({ mesh: pillar, box: pbox });
 }
 
-// ─── buildArena(size): build a world from scratch. Called at startup, and
-// again whenever the player switches between PvP and bots modes. Always
+// ─── buildArena(size, themeKey): build a world from scratch. Called at
+// startup and again whenever the player switches arena size OR theme. Always
 // runs under the seeded RNG so every client lays scenery out identically.
-function buildArena(size) {
+function buildArena(size, themeKey) {
+  if (themeKey && MAP_THEMES[themeKey]) currentTheme = themeKey;
+  const theme = getTheme();
+  // Tint shared ground + wall materials to match the theme. They're shared
+  // across all rebuilds so we always write a fresh colour (default forest =
+  // pure white, i.e. show the texture untouched).
+  groundMat.color.setHex(theme.groundTint);
+  wallMat.color.setHex(theme.rockTint);
   ARENA = size;
   // Wipe any prior arena meshes from the scene + colliders + placement grid
   for (const m of arenaMeshes) scene.remove(m);
@@ -1130,7 +1317,7 @@ function buildArena(size) {
       attempts++;
     } while (!tryPlace(x, z, 1.6) && attempts < 12);
     if (attempts >= 12) continue;
-    makeTree(x, z, 0.9 + Math.random() * 0.9);
+    makeThemedTree(x, z, 0.9 + Math.random() * 0.9);
   }
   for (let i = 0; i < counts.rocks; i++) {
     let x, z, attempts = 0;
@@ -1170,13 +1357,16 @@ function buildArena(size) {
     if (!tryPlace(x, z, 4)) continue;
     makeRock(x, z, 3 + Math.random() * 2);
   }
-  // Flowers — purely decorative, no collider, scatter across the grass
-  for (let i = 0; i < counts.flowers; i++) {
-    const x = (Math.random() - 0.5) * (ARENA * 1.7);
-    const z = (Math.random() - 0.5) * (ARENA * 1.7);
-    if (Math.hypot(x, z) < 6) continue;
-    if (isInsideObstacle(x, z)) continue;
-    makeFlower(x, z);
+  // Flowers — purely decorative, no collider, scatter across the grass.
+  // Desert / snow / nether themes skip flowers (no soft ground cover).
+  if (theme.flowers) {
+    for (let i = 0; i < counts.flowers; i++) {
+      const x = (Math.random() - 0.5) * (ARENA * 1.7);
+      const z = (Math.random() - 0.5) * (ARENA * 1.7);
+      if (Math.hypot(x, z) < 6) continue;
+      if (isInsideObstacle(x, z)) continue;
+      makeFlower(x, z);
+    }
   }
 
   // Restore the real Math.random for runtime systems
@@ -1312,12 +1502,16 @@ controls.addEventListener('unlock', () => {
   overlay.classList.remove('hidden');
 });
 
-function startGame(diffKey, overrideKillTarget, overrideMode) {
+function startGame(diffKey, overrideKillTarget, overrideMode, overrideTheme) {
   const conf = DIFFICULTIES[diffKey];
   game.difficulty = diffKey;
   // Mode: 'bots' (default, PvE with bots + a BOSS at the end) or 'pvp'
   // (player-vs-player only, no bots, smaller arena).
   game.mode = overrideMode || (net.isHost() ? (currentHostMode || 'bots') : 'bots');
+  // Theme: host's pick wins for multiplayer; solo uses the local pick.
+  const themeKey = (overrideTheme && MAP_THEMES[overrideTheme])
+    ? overrideTheme
+    : (selectedMapTheme || DEFAULT_THEME);
   game.kills = 0;
   game.pendingSpawns = 0;
   game.bossSpawned = false;
@@ -1345,12 +1539,13 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
 
   // If we're the multiplayer host, tell everyone else to start with the same params
   if (net.isHost() && overrideKillTarget == null) {
-    net.broadcast({ type: 'start-game', difficulty: diffKey, killTarget: target, mode: game.mode });
+    net.broadcast({ type: 'start-game', difficulty: diffKey, killTarget: target, mode: game.mode, theme: themeKey });
   }
 
-  // PvP plays on the original tight arena; bots/co-op uses the big map
+  // PvP plays on the original tight arena; bots/co-op uses the big map.
+  // Rebuild whenever either the size OR the theme changed.
   const desiredArena = game.mode === 'pvp' ? SMALL_ARENA : BIG_ARENA;
-  if (ARENA !== desiredArena) buildArena(desiredArena);
+  if (ARENA !== desiredArena || currentTheme !== themeKey) buildArena(desiredArena, themeKey);
   // Reflect resolved value in the input so the user sees what's running
   botTargetInput.value = target;
   botTargetUserEdited = false;
@@ -4232,6 +4427,9 @@ const PLAYER_COLORS = ['#ff6b35', '#4ac1ff', '#b46cff', '#52d97e'];
 // Tracks the host's currently selected room mode (read by startGame). Solo
 // players use the default 'bots'.
 let currentHostMode = 'bots';
+// C: which map theme the player picked in the overlay. The host's pick is
+// broadcast to clients as part of `start-game`.
+let selectedMapTheme = DEFAULT_THEME;
 // `remotePlayers` map (peerId → avatar) was forward-declared above so the
 // animation loop could safely reference it before this block initialises.
 
@@ -4296,6 +4494,21 @@ overlay.querySelectorAll('.mp-tab').forEach(tab => {
 document.querySelectorAll('input[name="hostMode"]').forEach(input => {
   input.addEventListener('change', () => {
     if (input.checked) currentHostMode = input.value;
+  });
+});
+
+// C: map picker — clicking a tile sets the active theme. Only the host's
+// pick matters in multiplayer; client picks are overridden by the start-game
+// broadcast.
+document.querySelectorAll('#mapPicks button[data-map]').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const key = btn.dataset.map;
+    if (!MAP_THEMES[key]) return;
+    selectedMapTheme = key;
+    document.querySelectorAll('#mapPicks button[data-map]').forEach(b => {
+      b.classList.toggle('active', b === btn);
+    });
   });
 });
 
@@ -4573,7 +4786,7 @@ net.addEventListener('message', e => {
     case 'start-game': {
       if (net.isClient()) {
         waitingForHostEl.classList.add('hidden');
-        startGame(data.difficulty, data.killTarget, data.mode);
+        startGame(data.difficulty, data.killTarget, data.mode, data.theme);
       }
       break;
     }
