@@ -4377,10 +4377,29 @@ function renderAdminUsers(users) {
         <span>🏆 ${u.stats.victories}</span>
         <span>💀 ${u.stats.deaths}</span>
         <span>🎮 ${u.stats.gamesPlayed}</span>
+        <span>💰 ${u.stats.coins ?? 0}</span>
       </div>
       <div class="actions"></div>
     `;
     const actionsEl = card.querySelector('.actions');
+    // 💰 Grant coins — allowed on YOURSELF too (admins often want to top up
+    // their own account for testing). The server clamps at 0 so subtracting
+    // too much can't go negative.
+    const grantCoins = document.createElement('button');
+    grantCoins.className = 'coins';
+    grantCoins.textContent = '💰 הוסף כסף';
+    grantCoins.onclick = async () => {
+      const raw = prompt(`כמה מטבעות להוסיף ל-${u.name}?\n(מספר חיובי = להוסיף, שלילי = להוריד)`, '100');
+      if (raw == null) return;
+      const amount = parseInt(raw, 10);
+      if (!Number.isFinite(amount) || amount === 0) {
+        adminErrorEl.textContent = 'יש להזין מספר שלם שונה מאפס';
+        return;
+      }
+      await adminAction(() => Auth.adminGrantCoins(u.id, amount));
+    };
+    actionsEl.appendChild(grantCoins);
+
     if (!isMe) {
       const toggleDisable = document.createElement('button');
       toggleDisable.textContent = u.isDisabled ? 'הפעל' : 'השבת';
@@ -4404,7 +4423,7 @@ function renderAdminUsers(users) {
     } else {
       const note = document.createElement('span');
       note.className = 'meta';
-      note.textContent = '(לא ניתן לבצע פעולות על עצמך)';
+      note.textContent = '(שאר הפעולות לא ניתנות על עצמך)';
       actionsEl.appendChild(note);
     }
     adminUsersGridEl.appendChild(card);
@@ -4417,6 +4436,10 @@ async function adminAction(fn, userId) {
     await fn(userId);
     const users = await Auth.listAllUsers();
     renderAdminUsers(users);
+    // If the action might've touched our own row (e.g. self-grant coins),
+    // refresh session.user so the HUD coin pill updates immediately.
+    await Auth.tryRestoreSession();
+    updateOverlayUserUI();
   } catch (err) {
     adminErrorEl.textContent = err.message || 'הפעולה נכשלה';
   }

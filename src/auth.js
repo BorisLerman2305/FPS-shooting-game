@@ -153,10 +153,19 @@ export function bumpStat(key, by = 1) {
 export function setFavoriteWeapon(weaponId) {
   if (!cachedUser) return;
   cachedUser.loadout = cachedUser.loadout || {};
+  const prev = cachedUser.loadout.favoriteWeapon;
   cachedUser.loadout.favoriteWeapon = weaponId;
   persistCache();
+  // If the server rejects (e.g. weapon not owned), roll the optimistic update
+  // back so the client doesn't lie about a favorite that didn't actually save.
   api('/api/me/loadout', { method: 'PATCH', body: { favoriteWeapon: weaponId }, auth: true })
-    .catch(() => {});
+    .catch((err) => {
+      console.warn('[auth] setFavoriteWeapon failed, rolling back:', err.message);
+      if (cachedUser) {
+        cachedUser.loadout.favoriteWeapon = prev;
+        persistCache();
+      }
+    });
 }
 
 // ─── Admin ───────────────────────────────────────────────────────────────
@@ -213,6 +222,9 @@ export async function enableUser(id)   { return api(`/api/admin/users/${id}/enab
 export async function promoteUser(id)  { return api(`/api/admin/users/${id}/promote`,  { method: 'PATCH', auth: true }); }
 export async function demoteUser(id)   { return api(`/api/admin/users/${id}/demote`,   { method: 'PATCH', auth: true }); }
 export async function deleteUser(id)   { return api(`/api/admin/users/${id}`,          { method: 'DELETE', auth: true }); }
+export async function adminGrantCoins(id, amount) {
+  return api(`/api/admin/users/${id}/coins`, { method: 'PATCH', body: { amount }, auth: true });
+}
 
 // ─── Debug / dev helpers (no longer touch server data) ──────────────────
 export function listUsernames() { return cachedUser ? [cachedUser.name] : []; }

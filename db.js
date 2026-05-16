@@ -227,3 +227,12 @@ export async function deleteUser(id) {
 export async function setUserAdmin(id, isAdmin) {
   await pool.query('UPDATE users SET is_admin = $1 WHERE id = $2', [isAdmin, id]);
 }
+
+// Admin: add (or subtract) coins from a user. Clamped at 0 so balances can't
+// go negative regardless of how aggressive the delta is.
+export async function adminAddCoins(id, delta) {
+  await pool.query(
+    'UPDATE users SET coins = GREATEST(0, coins + $2) WHERE id = $1',
+    [id, delta]
+  );
+}

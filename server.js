@@ -15,7 +15,7 @@ import {
   createUser, touchLastLogin, updateLoadout, bumpStats, buyItem,
   listAllUsers, setUserDisabled, deleteUser, setUserAdmin,
   publicUser, leaderboard, applyPvpKill,
-  setDailyChallenges, getDailyChallenges,
+  setDailyChallenges, getDailyChallenges, adminAddCoins,
 } from './db.js';
 
 // ─── Shop catalog (server-authoritative — client cannot fake costs) ──────
@@ -146,8 +146,17 @@ app.get('/api/auth/me', authMiddleware(true), async (req, res) => {
 // ─── User-facing endpoints (logged-in user updates their own data) ──────
 app.patch('/api/me/loadout', authMiddleware(true), async (req, res) => {
   const fav = (req.body.favoriteWeapon || '').trim();
-  const allowed = ['pistol', 'rifle', 'sniper', 'shotgun', 'sword', 'flamethrower'];
-  if (!allowed.includes(fav)) return res.status(400).json({ error: 'נשק לא חוקי' });
+  // Base weapons everyone has access to. Shop weapons are allowed only if the
+  // user actually owns them (added to owned_items via /api/me/buy).
+  const baseWeapons = ['pistol', 'rifle', 'sniper', 'shotgun', 'sword', 'flamethrower'];
+  const shopWeapons = ['rpg', 'tommyGun', 'lightsaber', 'crossbow', 'minigun'];
+  const allWeapons  = [...baseWeapons, ...shopWeapons];
+  if (!allWeapons.includes(fav)) {
+    return res.status(400).json({ error: 'נשק לא חוקי' });
+  }
+  if (shopWeapons.includes(fav) && !(req.user.owned_items || []).includes(fav)) {
+    return res.status(403).json({ error: 'הנשק לא ברשותך' });
+  }
   await updateLoadout(req.user.id, fav);
   res.json({ ok: true });
 });
@@ -394,6 +403,23 @@ app.delete('/api/admin/users/:id', authMiddleware(true), adminOnly, async (req, 
   const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.status(400).json({ error: 'לא ניתן למחוק את עצמך' });
   await deleteUser(id);
+  res.json({ ok: true });
+});
+
+// Admin: add or subtract coins from a user. Body: { amount: integer (±) }.
+// We clamp the resulting balance at 0 in the DB so a huge negative can't
+// leave anyone in the red.
+app.patch('/api/admin/users/:id/coins', authMiddleware(true), adminOnly, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const amount = parseInt(req.body && req.body.amount, 10);
+  if (!Number.isFinite(amount) || amount === 0) {
+    return res.status(400).json({ error: 'סכום לא תקין' });
+  }
+  // Guardrail: cap a single grant at ±1,000,000 so a typo can't blow the economy
+  if (Math.abs(amount) > 1_000_000) {
+    return res.status(400).json({ error: 'סכום גדול מדי (מקסימום מיליון לפעולה)' });
+  }
+  await adminAddCoins(id, amount);
   res.json({ ok: true });
 });
 
