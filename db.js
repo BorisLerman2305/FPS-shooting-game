@@ -42,7 +42,15 @@ export async function migrate() {
   // Make sure existing databases also pick up the new column.
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS coins INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS owned_items TEXT[] NOT NULL DEFAULT '{}'`);
+  // B4: PvP rating (Elo-style, starts at 1000)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS pvp_elo INTEGER NOT NULL DEFAULT 1000`);
+  // B2: daily challenges — server stores the rolled set + per-challenge progress
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_challenges JSONB NOT NULL DEFAULT '{}'::jsonb`);
   await pool.query(`CREATE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS users_kills_idx     ON users (kills DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS users_victories_idx ON users (victories DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS users_coins_idx     ON users (coins DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS users_pvp_elo_idx   ON users (pvp_elo DESC)`);
   console.log('[db] migration complete');
 }
 
@@ -62,11 +70,13 @@ export function publicUser(row) {
       deaths: row.deaths,
       gamesPlayed: row.games_played,
       coins: row.coins,
+      pvpElo: row.pvp_elo,
     },
     loadout: {
       favoriteWeapon: row.favorite_weapon,
     },
     ownedItems: row.owned_items || [],
+    dailyChallenges: row.daily_challenges || {},
   };
 }
 
@@ -141,6 +151,69 @@ export async function listAllUsers() {
     `SELECT * FROM users ORDER BY is_disabled ASC, last_login DESC NULLS LAST, created_at DESC`
   );
   return rows;
+}
+
+// ─── Leaderboard ─────────────────────────────────────────────────────────
+const LEADERBOARD_SORTS = {
+  kills:     'kills DESC',
+  victories: 'victories DESC',
+  coins:     'coins DESC',
+  pvp_elo:   'pvp_elo DESC',
+};
+export async function leaderboard(sort = 'kills', limit = 50) {
+  const order = LEADERBOARD_SORTS[sort] || LEADERBOARD_SORTS.kills;
+  const { rows } = await pool.query(
+    `SELECT id, username, kills, victories, deaths, games_played, coins, pvp_elo, is_admin
+       FROM users
+       WHERE is_disabled = FALSE
+       ORDER BY ${order}
+       LIMIT $1`,
+    [Math.max(1, Math.min(200, limit))]
+  );
+  return rows;
+}
+
+// ─── PvP Elo ─────────────────────────────────────────────────────────────
+// Standard Elo with K=32. Winner gains expected_to_lose × K, loser loses
+// the same. Floor at 100 so a bad streak can't go negative.
+export async function applyPvpKill(winnerId, loserId) {
+  if (!winnerId || !loserId || winnerId === loserId) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'SELECT id, pvp_elo FROM users WHERE id = ANY($1::int[]) FOR UPDATE',
+      [[winnerId, loserId]]
+    );
+    const w = rows.find(r => r.id === winnerId);
+    const l = rows.find(r => r.id === loserId);
+    if (!w || !l) { await client.query('ROLLBACK'); return null; }
+    const Ew = 1 / (1 + Math.pow(10, (l.pvp_elo - w.pvp_elo) / 400));
+    const K = 32;
+    const delta = Math.round(K * (1 - Ew));
+    const newW = Math.max(100, w.pvp_elo + delta);
+    const newL = Math.max(100, l.pvp_elo - delta);
+    await client.query('UPDATE users SET pvp_elo = $1 WHERE id = $2', [newW, winnerId]);
+    await client.query('UPDATE users SET pvp_elo = $1 WHERE id = $2', [newL, loserId]);
+    await client.query('COMMIT');
+    return { winnerElo: newW, loserElo: newL, delta };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// ─── Daily challenges ────────────────────────────────────────────────────
+// JSONB shape stored per user: { date: 'YYYY-MM-DD', list: [{...}, {...}, {...}] }
+// Each challenge: { id, type, target, progress, claimed }
+export async function setDailyChallenges(userId, payload) {
+  await pool.query('UPDATE users SET daily_challenges = $1 WHERE id = $2', [payload, userId]);
+}
+export async function getDailyChallenges(userId) {
+  const { rows } = await pool.query('SELECT daily_challenges FROM users WHERE id = $1', [userId]);
+  return rows[0]?.daily_challenges || {};
 }
 
 export async function setUserDisabled(id, disabled) {

@@ -1273,6 +1273,11 @@ const game = {
   alive: false,           // true once a difficulty has been picked & game started
 };
 
+// B4: the peerId of whoever last hit us via pvp-hit. When damagePlayer drops
+// us to 0 HP we send a 'pvp-killed' back to this peer so they can call
+// Auth.reportPvpKill(myUserId) and pick up the ELO win.
+let lastPvpAttackerPeerId = null;
+
 // Wire up difficulty buttons. Each button starts the game at that level.
 overlay.querySelectorAll('button[data-diff]').forEach((btn) => {
   btn.addEventListener('click', (e) => {
@@ -1324,6 +1329,7 @@ function startGame(diffKey, overrideKillTarget, overrideMode) {
   game.maxGrenades = playerOwns('grenadeMax') ? 7 : MAX_GRENADES;
   game.alive = true;
   updateCoinHUD();
+  Auth.bumpChallenge('play_games', 1);
 
   // Resolve the kill target: explicit override (e.g. from host broadcast) wins,
   // else the input value if user edited it, else the difficulty default.
@@ -2486,6 +2492,7 @@ function winGame() {
   game.alive = false;
   Auth.bumpStat('victories', 1);
   Auth.bumpStat('gamesPlayed', 1);
+  Auth.bumpChallenge('win_games', 1);
   victoryKillsEl.textContent = game.kills;
   victoryDiffEl.textContent = DIFFICULTIES[game.difficulty].label;
   // Show coin earnings (only meaningful in bots mode)
@@ -2732,12 +2739,22 @@ function damageBot(bot, amount) {
     killCountEl.textContent = game.kills;
     Auth.bumpStat('kills', 1);
 
+    // B2: daily-challenge progress for kills.
+    Auth.bumpChallenge('kill_bots', 1);
+    if (bot.isBoss) Auth.bumpChallenge('kill_boss', 1);
+    if (bot.archetype === 'sniper')   Auth.bumpChallenge('kill_sniper', 1);
+    if (bot.archetype === 'kamikaze') Auth.bumpChallenge('kill_kamikaze', 1);
+    if (bot.archetype === 'healer')   Auth.bumpChallenge('kill_healer', 1);
+    if (currentWeaponId === 'sword') Auth.bumpChallenge('kill_with_sword', 1);
+    if (currentWeaponId === 'rpg')   Auth.bumpChallenge('kill_with_rpg', 1);
+
     // Coins are only awarded in the PvE (bots + BOSS) mode — PvP doesn't
     // pay out so no incentive to farm friends.
     if (game.mode === 'bots') {
       const reward = bot.isBoss ? 5 : 1;
       game.coinsThisGame = (game.coinsThisGame || 0) + reward;
       Auth.bumpStat('coins', reward);
+      Auth.bumpChallenge('earn_coins', reward);
       // Pop a tiny "+N 💰" indicator near the kill counter
       flashCoinReward(reward);
       updateCoinHUD();
@@ -3903,6 +3920,183 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   showAuthScreen();
 });
 
+// ─── B1: Global leaderboard ──────────────────────────────────────────────
+const leaderboardPanelEl = document.getElementById('leaderboardPanel');
+const leaderboardListEl  = document.getElementById('leaderboardList');
+let _lbCurrentSort = 'kills';
+
+document.getElementById('leaderboardBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  openLeaderboard();
+});
+document.getElementById('leaderboardCloseBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  leaderboardPanelEl.classList.add('hidden');
+});
+document.querySelectorAll('#leaderboardPanel .lb-tab').forEach(tab => {
+  tab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('#leaderboardPanel .lb-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    _lbCurrentSort = tab.dataset.sort;
+    renderLeaderboard();
+  });
+});
+
+async function openLeaderboard() {
+  leaderboardPanelEl.classList.remove('hidden');
+  leaderboardListEl.innerHTML = '<div style="text-align:center;opacity:0.6">טוען...</div>';
+  await renderLeaderboard();
+}
+
+async function renderLeaderboard() {
+  try {
+    const players = await Auth.fetchLeaderboard(_lbCurrentSort);
+    leaderboardListEl.innerHTML = '';
+    const myName = session.user ? session.user.name : null;
+    const valueField = {
+      kills: 'kills', victories: 'victories', coins: 'coins', pvp_elo: 'pvpElo',
+    }[_lbCurrentSort];
+    players.forEach((p, i) => {
+      const row = document.createElement('div');
+      row.className = 'lb-row' + (p.name === myName ? ' me' : '');
+      const rankClass = i === 0 ? 'rank gold' : i === 1 ? 'rank silver' : i === 2 ? 'rank bronze' : 'rank';
+      row.innerHTML = `
+        <span class="${rankClass}">#${i + 1}</span>
+        <span class="name">${escapeHtml(p.name)}${p.isAdmin ? ' ⭐' : ''}</span>
+        <span class="value">${p[valueField] ?? 0}</span>
+      `;
+      leaderboardListEl.appendChild(row);
+    });
+    if (players.length === 0) {
+      leaderboardListEl.innerHTML = '<div style="text-align:center;opacity:0.6">אין שחקנים</div>';
+    }
+  } catch (err) {
+    leaderboardListEl.innerHTML = `<div style="color:#ff7b6b;text-align:center">שגיאה: ${err.message || err}</div>`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+// ─── B2: Daily challenges ────────────────────────────────────────────────
+const challengesPanelEl = document.getElementById('challengesPanel');
+const challengesListEl  = document.getElementById('challengesList');
+const challengesErrorEl = document.getElementById('challengesError');
+
+document.getElementById('challengesBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!session.user) return;
+  openChallenges();
+});
+document.getElementById('challengesCloseBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  challengesPanelEl.classList.add('hidden');
+});
+
+async function openChallenges() {
+  challengesPanelEl.classList.remove('hidden');
+  challengesErrorEl.innerHTML = '&nbsp;';
+  challengesListEl.innerHTML = '<div style="text-align:center;opacity:0.6">טוען...</div>';
+  try {
+    const challenges = await Auth.fetchDailyChallenges();
+    renderChallenges(challenges);
+  } catch (err) {
+    challengesErrorEl.textContent = err.message || 'שגיאה';
+    challengesListEl.innerHTML = '';
+  }
+}
+
+function renderChallenges(challenges) {
+  challengesListEl.innerHTML = '';
+  for (const c of challenges.list) {
+    const done = c.progress >= c.target;
+    const card = document.createElement('div');
+    card.className = 'ch-card' + (done ? ' done' : '') + (c.claimed ? ' claimed' : '');
+    const pct = Math.min(100, (c.progress / c.target) * 100);
+    card.innerHTML = `
+      <div class="row">
+        <span class="label">${escapeHtml(c.label)}</span>
+        <span class="reward">💰 ${c.reward}</span>
+      </div>
+      <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+      <div class="row">
+        <span class="progress">${c.progress} / ${c.target}</span>
+      </div>
+    `;
+    const btn = document.createElement('button');
+    if (c.claimed) {
+      btn.textContent = '✓ נדרשה'; btn.disabled = true;
+    } else if (done) {
+      btn.textContent = '🎁 קח פרס';
+      btn.onclick = async () => {
+        challengesErrorEl.innerHTML = '&nbsp;';
+        btn.disabled = true; btn.textContent = 'מקבל...';
+        try {
+          const result = await Auth.claimChallenge(c.id);
+          renderChallenges(result.challenges);
+          updateOverlayUserUI();
+          updateCoinHUD();
+        } catch (err) {
+          challengesErrorEl.textContent = err.message || 'הקבלה נכשלה';
+          btn.disabled = false; btn.textContent = '🎁 קח פרס';
+        }
+      };
+    } else {
+      btn.textContent = '🔒 לא הושלם'; btn.disabled = true;
+    }
+    card.appendChild(btn);
+    challengesListEl.appendChild(card);
+  }
+}
+
+// ─── B3: Achievements ────────────────────────────────────────────────────
+const achievementsPanelEl   = document.getElementById('achievementsPanel');
+const achievementsGridEl    = document.getElementById('achievementsGrid');
+const achievementsSummaryEl = document.getElementById('achievementsSummary');
+
+document.getElementById('achievementsBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!session.user) return;
+  openAchievements();
+});
+document.getElementById('achievementsCloseBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  achievementsPanelEl.classList.add('hidden');
+});
+
+const ACHIEVEMENT_ICONS = {
+  first_blood: '🩸', killer_25: '🎯', killer_100: '💀', killer_500: '☠️', killer_1000: '👹',
+  first_win: '🏁', winner_10: '🏆', winner_50: '👑',
+  coin_hoarder: '💰', rich: '💎',
+  veteran: '🎖️',
+  pvp_starter: '⚔️', pvp_master: '🗡️',
+};
+
+async function openAchievements() {
+  achievementsPanelEl.classList.remove('hidden');
+  achievementsGridEl.innerHTML = '<div style="text-align:center;opacity:0.6">טוען...</div>';
+  achievementsSummaryEl.textContent = '';
+  try {
+    const data = await Auth.fetchAchievements();
+    achievementsSummaryEl.textContent = `פתחת ${data.unlockedCount} מתוך ${data.total}`;
+    achievementsGridEl.innerHTML = '';
+    for (const a of data.achievements) {
+      const card = document.createElement('div');
+      card.className = 'ach-card' + (a.unlocked ? ' unlocked' : '');
+      card.innerHTML = `
+        <div class="icon">${ACHIEVEMENT_ICONS[a.id] || (a.unlocked ? '🏆' : '🔒')}</div>
+        <div class="name">${escapeHtml(a.name)}</div>
+        <div class="desc">${escapeHtml(a.description)}</div>
+      `;
+      achievementsGridEl.appendChild(card);
+    }
+  } catch (err) {
+    achievementsGridEl.innerHTML = `<div style="color:#ff7b6b;text-align:center">שגיאה: ${err.message || err}</div>`;
+  }
+}
+
 // ─── Admin panel ──────────────────────────────────────────────────────────
 const adminPanelEl = document.getElementById('adminPanel');
 const adminUsersGridEl = document.getElementById('adminUsersGrid');
@@ -4076,6 +4270,9 @@ function syncProfileToNet() {
     name: getMyDisplayName(),
     color: pickPlayerColor(),
     fav: getEffectiveFavorite(),
+    // B4: PvP-ELO needs the server-side user id so the shooter can call
+    // /api/me/pvp-kill with the right target. Guests have no id → null.
+    userId: session.user ? session.user.id : null,
   });
 }
 
@@ -4377,10 +4574,33 @@ net.addEventListener('message', e => {
     case 'pvp-hit': {
       // Another player reported hitting us. Apply the damage locally. We
       // trust the sender for v1 — no anti-cheat (this is a friend-game).
+      // If the hit kills us, the damagePlayer path will tell the shooter
+      // so they can credit themselves with the PvP-ELO win.
+      const wasAlive = game.alive;
+      lastPvpAttackerPeerId = from;
       damagePlayer(Math.max(1, Math.min(50, data.amount || 0)));
+      // If this packet was the killing blow, send a `pvp-killed` back to
+      // the shooter so they can call Auth.reportPvpKill(myUserId).
+      if (wasAlive && !game.alive && session.user) {
+        const killedMsg = { type: 'pvp-killed', shooterId: from, victimUserId: session.user.id };
+        if (net.isHost()) net.sendTo(from, killedMsg);
+        else net.sendToHost(killedMsg);
+      }
       // Host relays so the rest of the room can also count the hit later
       if (net.isHost() && data.targetId && data.targetId !== net.myId) {
         net.sendTo(data.targetId, { type: 'pvp-hit', from, amount: data.amount });
+      }
+      break;
+    }
+    case 'pvp-killed': {
+      // We were told we landed a kill. If the message is for us, credit
+      // the ELO update on the server (server treats `this user` as winner).
+      if (data.shooterId === net.myId && data.victimUserId) {
+        Auth.reportPvpKill(data.victimUserId).catch(() => {});
+        updateOverlayUserUI();
+      } else if (net.isHost() && data.shooterId) {
+        // We're the host and the victim was a client → relay to shooter.
+        net.sendTo(data.shooterId, { type: 'pvp-killed', shooterId: data.shooterId, victimUserId: data.victimUserId });
       }
       break;
     }

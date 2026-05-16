@@ -165,6 +165,41 @@ export async function listAllUsers() {
   return data.users;
 }
 
+// ─── Leaderboard ─────────────────────────────────────────────────────────
+export async function fetchLeaderboard(sort = 'kills') {
+  const data = await api(`/api/leaderboard?sort=${encodeURIComponent(sort)}`);
+  return data.players || [];
+}
+
+// ─── PvP rating ──────────────────────────────────────────────────────────
+export async function reportPvpKill(targetUserId) {
+  const data = await api('/api/me/pvp-kill', { method: 'POST', body: { targetId: targetUserId }, auth: true });
+  if (data && data.user) mergeFromServer(data.user);
+  return data;
+}
+
+// ─── Daily challenges ────────────────────────────────────────────────────
+export async function fetchDailyChallenges() {
+  const data = await api('/api/me/challenges', { auth: true });
+  return data.challenges;
+}
+// Fire-and-forget — bumps any active challenge of that type by `by`
+export function bumpChallenge(type, by = 1) {
+  api('/api/me/challenges/progress', { method: 'POST', body: { type, by }, auth: true })
+    .catch(() => {});
+}
+export async function claimChallenge(id) {
+  const data = await api('/api/me/challenges/claim', { method: 'POST', body: { id }, auth: true });
+  if (data && data.user) mergeFromServer(data.user);
+  return data;
+}
+
+// ─── Achievements ────────────────────────────────────────────────────────
+export async function fetchAchievements() {
+  const data = await api('/api/me/achievements', { auth: true });
+  return data;
+}
+
 // ─── Shop ────────────────────────────────────────────────────────────────
 export async function buyItem(itemId) {
   const data = await api('/api/me/buy', { method: 'POST', body: { itemId }, auth: true });

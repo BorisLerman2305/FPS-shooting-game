@@ -327,6 +327,94 @@
     #overlay .user-bar #adminBtn { border-color: #ffd54a; color: #ffd54a; }
     #overlay .user-bar #adminBtn:hover { background: #ffd54a; color: #000; }
 
+    /* Leaderboard / Challenges / Achievements panels — share visual style with shop */
+    #leaderboardPanel, #challengesPanel, #achievementsPanel {
+      position: fixed; inset: 0;
+      display: flex; align-items: flex-start; justify-content: center;
+      background: rgba(8, 14, 28, 0.96); color: #fff; z-index: 220;
+      flex-direction: column; padding: 20px; gap: 14px;
+      direction: rtl; overflow-y: auto;
+    }
+    #leaderboardPanel header, #challengesPanel header, #achievementsPanel header {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; max-width: 720px; align-self: center;
+    }
+    #leaderboardPanel h1, #challengesPanel h1, #achievementsPanel h1 {
+      font-size: 26px; color: #ffd54a;
+    }
+    #leaderboardPanel .panel-close, #challengesPanel .panel-close, #achievementsPanel .panel-close {
+      font-size: 14px; padding: 8px 16px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.4); background: transparent; color: #fff; cursor: pointer;
+    }
+
+    /* Leaderboard */
+    #leaderboardPanel .lb-tabs { display: flex; gap: 6px; width: 100%; max-width: 720px; align-self: center; flex-wrap: wrap; }
+    #leaderboardPanel .lb-tab {
+      flex: 1; padding: 8px 12px; font-size: 14px; cursor: pointer; min-width: 0;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+      color: #fff; border-radius: 6px;
+    }
+    #leaderboardPanel .lb-tab.active { background: #ffd54a; color: #000; border-color: #ffd54a; }
+    #leaderboardPanel .lb-list { width: 100%; max-width: 720px; align-self: center; display: flex; flex-direction: column; gap: 4px; }
+    #leaderboardPanel .lb-row {
+      display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
+      font-size: 14px;
+    }
+    #leaderboardPanel .lb-row.me { background: rgba(255,213,74,0.18); border-color: rgba(255,213,74,0.5); }
+    #leaderboardPanel .lb-row .rank { font-weight: bold; min-width: 32px; color: #ffd54a; }
+    #leaderboardPanel .lb-row .rank.gold   { color: #ffd54a; font-size: 18px; }
+    #leaderboardPanel .lb-row .rank.silver { color: #c0c0c0; font-size: 18px; }
+    #leaderboardPanel .lb-row .rank.bronze { color: #cd7f32; font-size: 18px; }
+    #leaderboardPanel .lb-row .name  { flex: 1; font-weight: bold; }
+    #leaderboardPanel .lb-row .value { font-weight: bold; color: #ffd54a; min-width: 80px; text-align: left; }
+
+    /* Challenges */
+    #challengesPanel .ch-list { width: 100%; max-width: 720px; align-self: center; display: flex; flex-direction: column; gap: 12px; }
+    #challengesPanel .ch-card {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px;
+    }
+    #challengesPanel .ch-card.done { border-color: #4caf50; }
+    #challengesPanel .ch-card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    #challengesPanel .ch-card .label { font-size: 16px; font-weight: bold; }
+    #challengesPanel .ch-card .reward { color: #ffd54a; font-weight: bold; }
+    #challengesPanel .ch-card .bar {
+      width: 100%; height: 10px; background: rgba(0,0,0,0.4); border-radius: 5px; overflow: hidden;
+    }
+    #challengesPanel .ch-card .fill {
+      height: 100%; background: linear-gradient(90deg, #4caf50, #8bc34a); transition: width 0.3s;
+    }
+    #challengesPanel .ch-card .progress { font-size: 13px; opacity: 0.85; }
+    #challengesPanel .ch-card button {
+      padding: 8px 14px; font-size: 14px; border-radius: 6px; cursor: pointer;
+      background: #ffd54a; color: #000; border: 1px solid #ffd54a; font-weight: bold;
+    }
+    #challengesPanel .ch-card button:disabled {
+      background: rgba(255,255,255,0.05); color: #888; border-color: rgba(255,255,255,0.15); cursor: not-allowed;
+    }
+    #challengesPanel .ch-card.claimed button { background: rgba(76,175,80,0.4); border-color: #4caf50; color: #c8ffd2; cursor: default; }
+    #challengesPanel .ch-error { color: #ff7b6b; min-height: 18px; font-size: 13px; }
+
+    /* Achievements */
+    #achievementsPanel .ach-summary { font-size: 14px; opacity: 0.85; }
+    #achievementsPanel .ach-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px; width: 100%; max-width: 960px; align-self: center;
+    }
+    #achievementsPanel .ach-card {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px; padding: 14px; text-align: center; opacity: 0.45;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    #achievementsPanel .ach-card.unlocked {
+      opacity: 1; border-color: #ffd54a;
+      background: linear-gradient(180deg, rgba(255,213,74,0.18), rgba(255,255,255,0.06));
+    }
+    #achievementsPanel .ach-card .icon { font-size: 32px; }
+    #achievementsPanel .ach-card .name { font-weight: bold; color: #ffd54a; }
+    #achievementsPanel .ach-card .desc { font-size: 12px; opacity: 0.9; }
+
     /* Shop panel — owned items + buy buttons */
     #shopPanel {
       position: fixed; inset: 0;
@@ -867,6 +955,9 @@
       <span>שלום, <span class="name" id="userName">—</span></span>
       <span class="coins hidden" id="userCoins">💰 0</span>
       <button id="shopBtn" class="hidden">🛒 חנות</button>
+      <button id="challengesBtn" class="hidden">📜 משימות</button>
+      <button id="achievementsBtn" class="hidden">🏆 הישגים</button>
+      <button id="leaderboardBtn">🏅 דירוג</button>
       <span class="admin-badge hidden" id="adminBadge">ADMIN</span>
       <button id="adminBtn" class="hidden">⚙️ ניהול</button>
       <button id="logoutBtn">התנתק</button>
@@ -971,6 +1062,41 @@
   <div id="waitingForHost" class="hidden">
     ⏳ ממתין למארח להתחיל את המשחק...
     <div class="small">לחץ ESC כדי לחזור לתפריט</div>
+  </div>
+
+  <!-- Leaderboard — public, anyone can open -->
+  <div id="leaderboardPanel" class="hidden">
+    <header>
+      <h1>🏅 דירוג כללי</h1>
+      <button class="panel-close" id="leaderboardCloseBtn">✕ סגור</button>
+    </header>
+    <div class="lb-tabs">
+      <button class="lb-tab active" data-sort="kills">🎯 הריגות</button>
+      <button class="lb-tab" data-sort="victories">🏆 ניצחונות</button>
+      <button class="lb-tab" data-sort="coins">💰 מטבעות</button>
+      <button class="lb-tab" data-sort="pvp_elo">⚔️ דירוג PvP</button>
+    </div>
+    <div class="lb-list" id="leaderboardList"></div>
+  </div>
+
+  <!-- Daily challenges — logged-in only -->
+  <div id="challengesPanel" class="hidden">
+    <header>
+      <h1>📜 משימות יומיות</h1>
+      <button class="panel-close" id="challengesCloseBtn">✕ סגור</button>
+    </header>
+    <div class="ch-error" id="challengesError">&nbsp;</div>
+    <div class="ch-list" id="challengesList"></div>
+  </div>
+
+  <!-- Achievements — logged-in only -->
+  <div id="achievementsPanel" class="hidden">
+    <header>
+      <h1>🏆 הישגים</h1>
+      <button class="panel-close" id="achievementsCloseBtn">✕ סגור</button>
+    </header>
+    <div class="ach-summary" id="achievementsSummary"></div>
+    <div class="ach-grid" id="achievementsGrid"></div>
   </div>
 
   <!-- Shop panel — opens for any logged-in user -->

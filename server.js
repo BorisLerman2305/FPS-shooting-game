@@ -14,7 +14,8 @@ import {
   findUserByUsername, findUserById, userCount,
   createUser, touchLastLogin, updateLoadout, bumpStats, buyItem,
   listAllUsers, setUserDisabled, deleteUser, setUserAdmin,
-  publicUser,
+  publicUser, leaderboard, applyPvpKill,
+  setDailyChallenges, getDailyChallenges,
 } from './db.js';
 
 // ─── Shop catalog (server-authoritative — client cannot fake costs) ──────
@@ -159,6 +160,169 @@ app.post('/api/me/stats', authMiddleware(true), async (req, res) => {
   await bumpStats(req.user.id, deltas);
   const row = await findUserById(req.user.id);
   res.json({ user: publicUser(row) });
+});
+
+// ─── Leaderboard ─────────────────────────────────────────────────────────
+app.get('/api/leaderboard', async (req, res) => {
+  const sort = ['kills', 'victories', 'coins', 'pvp_elo'].includes(req.query.sort)
+    ? req.query.sort : 'kills';
+  try {
+    const rows = await leaderboard(sort, 50);
+    res.json({ sort, players: rows.map(r => ({
+      id: r.id, name: r.username, isAdmin: r.is_admin,
+      kills: r.kills, victories: r.victories, deaths: r.deaths,
+      gamesPlayed: r.games_played, coins: r.coins, pvpElo: r.pvp_elo,
+    })) });
+  } catch (e) {
+    console.error('[leaderboard]', e);
+    res.status(500).json({ error: 'שגיאת שרת' });
+  }
+});
+
+// ─── PvP rating ──────────────────────────────────────────────────────────
+app.post('/api/me/pvp-kill', authMiddleware(true), async (req, res) => {
+  const targetId = parseInt(req.body && req.body.targetId, 10);
+  if (!Number.isFinite(targetId) || targetId === req.user.id) {
+    return res.status(400).json({ error: 'יעד לא חוקי' });
+  }
+  try {
+    const result = await applyPvpKill(req.user.id, targetId);
+    if (!result) return res.status(404).json({ error: 'יעד לא נמצא' });
+    const row = await findUserById(req.user.id);
+    res.json({ ...result, user: publicUser(row) });
+  } catch (e) {
+    console.error('[pvp-kill]', e);
+    res.status(500).json({ error: 'שגיאת שרת' });
+  }
+});
+
+// ─── Daily challenges ────────────────────────────────────────────────────
+// Pool of templates — random 3 are rolled per user per day. type names
+// match the client-side bumpDailyChallenge() calls.
+const CHALLENGE_TEMPLATES = [
+  { type: 'kill_bots',       target:  20, reward: 30, label: 'הרוג 20 בוטים' },
+  { type: 'kill_bots',       target:  50, reward: 80, label: 'הרוג 50 בוטים' },
+  { type: 'kill_boss',       target:   1, reward: 40, label: 'הרוג 1 BOSS' },
+  { type: 'kill_boss',       target:   3, reward: 120,label: 'הרוג 3 BOSSים' },
+  { type: 'win_games',       target:   3, reward: 60, label: 'נצח ב-3 משחקים' },
+  { type: 'kill_sniper',     target:   5, reward: 35, label: 'הרוג 5 צלפים' },
+  { type: 'kill_kamikaze',   target:   5, reward: 35, label: 'הרוג 5 קמיקזות' },
+  { type: 'kill_healer',     target:   3, reward: 35, label: 'הרוג 3 רופאים' },
+  { type: 'earn_coins',      target: 100, reward: 40, label: 'הרווח 100 מטבעות' },
+  { type: 'play_games',      target:   5, reward: 25, label: 'שחק 5 משחקים' },
+  { type: 'kill_with_sword', target:  10, reward: 50, label: 'הרוג 10 עם חרב' },
+  { type: 'kill_with_rpg',   target:   8, reward: 60, label: 'הרוג 8 עם RPG' },
+];
+
+function todayKey() {
+  // Day key in the server's UTC date — coarse but consistent
+  return new Date().toISOString().slice(0, 10);
+}
+function rollDailyChallenges() {
+  // Pick 3 distinct templates
+  const pool = [...CHALLENGE_TEMPLATES];
+  const picked = [];
+  while (picked.length < 3 && pool.length) {
+    const i = Math.floor(Math.random() * pool.length);
+    const [tpl] = pool.splice(i, 1);
+    picked.push({
+      id: Math.random().toString(36).slice(2, 9),
+      type: tpl.type, target: tpl.target, reward: tpl.reward, label: tpl.label,
+      progress: 0, claimed: false,
+    });
+  }
+  return { date: todayKey(), list: picked };
+}
+
+// Returns today's challenges; rolls a new set if the stored ones are stale.
+async function ensureTodayChallenges(userId) {
+  const stored = await getDailyChallenges(userId);
+  if (stored && stored.date === todayKey() && Array.isArray(stored.list) && stored.list.length === 3) {
+    return stored;
+  }
+  const fresh = rollDailyChallenges();
+  await setDailyChallenges(userId, fresh);
+  return fresh;
+}
+
+app.get('/api/me/challenges', authMiddleware(true), async (req, res) => {
+  try {
+    const challenges = await ensureTodayChallenges(req.user.id);
+    res.json({ challenges });
+  } catch (e) {
+    console.error('[challenges]', e);
+    res.status(500).json({ error: 'שגיאת שרת' });
+  }
+});
+
+app.post('/api/me/challenges/progress', authMiddleware(true), async (req, res) => {
+  const type = String(req.body && req.body.type || '');
+  const by = Math.max(1, Math.min(100, Math.floor(Number(req.body && req.body.by) || 1)));
+  try {
+    const challenges = await ensureTodayChallenges(req.user.id);
+    let touched = false;
+    for (const c of challenges.list) {
+      if (c.type !== type || c.claimed) continue;
+      if (c.progress >= c.target) continue;
+      c.progress = Math.min(c.target, c.progress + by);
+      touched = true;
+    }
+    if (touched) await setDailyChallenges(req.user.id, challenges);
+    res.json({ challenges });
+  } catch (e) {
+    console.error('[challenges/progress]', e);
+    res.status(500).json({ error: 'שגיאת שרת' });
+  }
+});
+
+app.post('/api/me/challenges/claim', authMiddleware(true), async (req, res) => {
+  const id = String(req.body && req.body.id || '');
+  try {
+    const challenges = await ensureTodayChallenges(req.user.id);
+    const c = challenges.list.find(x => x.id === id);
+    if (!c) return res.status(404).json({ error: 'משימה לא נמצאה' });
+    if (c.claimed) return res.status(409).json({ error: 'כבר הוחלפה' });
+    if (c.progress < c.target) return res.status(409).json({ error: 'המשימה לא הושלמה' });
+    c.claimed = true;
+    await setDailyChallenges(req.user.id, challenges);
+    // Grant the reward as coins on the user record
+    await bumpStats(req.user.id, { coins: c.reward });
+    const row = await findUserById(req.user.id);
+    res.json({ user: publicUser(row), challenges, reward: c.reward });
+  } catch (e) {
+    console.error('[challenges/claim]', e);
+    res.status(500).json({ error: 'שגיאת שרת' });
+  }
+});
+
+// ─── Achievements (derived from stats — no DB writes needed) ─────────────
+// Each achievement: { id, name, description, check(user) → bool, reward }
+const ACHIEVEMENTS = [
+  { id: 'first_blood',  name: 'דם ראשון',     description: 'הרוג בוט אחד',                check: u => u.kills >= 1 },
+  { id: 'killer_25',    name: 'מתחיל',         description: 'הרוג 25 בוטים',              check: u => u.kills >= 25 },
+  { id: 'killer_100',   name: 'מקצוען',        description: 'הרוג 100 בוטים',             check: u => u.kills >= 100 },
+  { id: 'killer_500',   name: 'מסיר ראשים',     description: 'הרוג 500 בוטים',             check: u => u.kills >= 500 },
+  { id: 'killer_1000',  name: 'אגדה',          description: 'הרוג 1000 בוטים',            check: u => u.kills >= 1000 },
+  { id: 'first_win',    name: 'ניצחון ראשון',   description: 'נצח במשחק אחד',              check: u => u.victories >= 1 },
+  { id: 'winner_10',    name: 'מנצח סדרתי',     description: 'נצח ב-10 משחקים',             check: u => u.victories >= 10 },
+  { id: 'winner_50',    name: 'אלוף',          description: 'נצח ב-50 משחקים',             check: u => u.victories >= 50 },
+  { id: 'coin_hoarder', name: 'אספן מטבעות',    description: 'צבור 500 מטבעות לאורך זמן', check: u => u.coins >= 500 },
+  { id: 'rich',         name: 'עשיר',         description: 'צבור 2000 מטבעות',           check: u => u.coins >= 2000 },
+  { id: 'veteran',      name: 'ותיק',          description: 'שחק ב-25 משחקים',             check: u => u.games_played >= 25 },
+  { id: 'pvp_starter',  name: 'לוחם PvP',     description: 'הגע לדירוג PvP 1100',        check: u => u.pvp_elo >= 1100 },
+  { id: 'pvp_master',   name: 'מאסטר PvP',    description: 'הגע לדירוג PvP 1300',        check: u => u.pvp_elo >= 1300 },
+];
+
+app.get('/api/me/achievements', authMiddleware(true), async (req, res) => {
+  const u = req.user;
+  const stats = {
+    kills: u.kills, victories: u.victories, deaths: u.deaths,
+    games_played: u.games_played, coins: u.coins, pvp_elo: u.pvp_elo,
+  };
+  const list = ACHIEVEMENTS.map(a => ({
+    id: a.id, name: a.name, description: a.description, unlocked: a.check(stats),
+  }));
+  res.json({ achievements: list, unlockedCount: list.filter(a => a.unlocked).length, total: list.length });
 });
 
 // ─── Shop ────────────────────────────────────────────────────────────────
