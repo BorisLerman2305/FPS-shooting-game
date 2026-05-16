@@ -38,57 +38,78 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 document.getElementById('app').appendChild(renderer.domElement);
 
-// Sky: vertex-coloured dome for the gradient + a real spherical sun with a
-// halo glow + a smaller moon on the opposite side + irregular cloud groups.
+// Sky objects exposed at module scope so tickDayCycle can animate them.
+let sunVisual = null;
+let moonVisual = null;
+let sunCoreMat = null, sunHaloMat = null;
+let moonCoreMat = null, moonHaloMat = null;
+let starsMesh = null;
+let skyDomeMat = null;
+
 function buildSkyDome() {
-  // Gradient dome — top deep blue, horizon paler. BackSide so the player
-  // sees its inside; depth-write off so other sky objects sit on top.
+  // Gradient dome — top deep blue, horizon paler. Vertex colours are now
+  // baked from neutral "day" tones at build time, and tinted at runtime
+  // by tickDayCycle via the material's `color` property.
   const domeGeo = new THREE.SphereGeometry(700, 24, 16);
   const positions = domeGeo.attributes.position;
   const colors = new Float32Array(positions.count * 3);
   for (let i = 0; i < positions.count; i++) {
     const y = positions.getY(i);
-    const t = THREE.MathUtils.clamp((y + 80) / 480, 0, 1); // 0 at horizon, 1 at top
-    const c = SKY_HORIZON.clone().lerp(SKY_TOP, t);
-    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    const t = THREE.MathUtils.clamp((y + 80) / 480, 0, 1);
+    // Bake as relative tone: 1.0 horizon, 0.85 zenith. tickDayCycle multiplies.
+    const tone = THREE.MathUtils.lerp(1.0, 0.78, t);
+    colors[i * 3] = tone; colors[i * 3 + 1] = tone; colors[i * 3 + 2] = tone;
   }
   domeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const dome = new THREE.Mesh(
-    domeGeo,
-    new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
-  );
-  scene.add(dome);
+  skyDomeMat = new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false,
+    color: 0xb8dcff,    // multiplied by per-vertex tone — gets tinted each frame
+  });
+  scene.add(new THREE.Mesh(domeGeo, skyDomeMat));
 
-  // Sun — a glowing sphere (NOT a flat quad). Two layers: a bright core
-  // and a translucent halo. The bloom pass picks up the bright core.
-  const sun = new THREE.Group();
-  const sunCore = new THREE.Mesh(
-    new THREE.SphereGeometry(24, 24, 24),
-    new THREE.MeshBasicMaterial({ color: 0xfff7d2, fog: false, depthWrite: false })
+  // Sun
+  sunCoreMat = new THREE.MeshBasicMaterial({ color: 0xfff7d2, fog: false, depthWrite: false });
+  sunHaloMat = new THREE.MeshBasicMaterial({ color: 0xfff4a8, transparent: true, opacity: 0.35, fog: false, depthWrite: false });
+  sunVisual = new THREE.Group();
+  sunVisual.add(
+    new THREE.Mesh(new THREE.SphereGeometry(40, 24, 24), sunHaloMat),
+    new THREE.Mesh(new THREE.SphereGeometry(24, 24, 24), sunCoreMat),
   );
-  const sunHalo = new THREE.Mesh(
-    new THREE.SphereGeometry(40, 24, 24),
-    new THREE.MeshBasicMaterial({ color: 0xfff4a8, transparent: true, opacity: 0.35, fog: false, depthWrite: false })
-  );
-  sun.add(sunHalo, sunCore);
-  sun.position.set(280, 420, -420);
-  scene.add(sun);
+  scene.add(sunVisual);
 
-  // Moon — on the opposite side of the sky for atmosphere
-  const moon = new THREE.Group();
-  const moonCore = new THREE.Mesh(
-    new THREE.SphereGeometry(14, 20, 20),
-    new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false, depthWrite: false })
+  // Moon
+  moonCoreMat = new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false, depthWrite: false });
+  moonHaloMat = new THREE.MeshBasicMaterial({ color: 0xc8d6ee, transparent: true, opacity: 0.25, fog: false, depthWrite: false });
+  moonVisual = new THREE.Group();
+  moonVisual.add(
+    new THREE.Mesh(new THREE.SphereGeometry(22, 20, 20), moonHaloMat),
+    new THREE.Mesh(new THREE.SphereGeometry(14, 20, 20), moonCoreMat),
   );
-  const moonHalo = new THREE.Mesh(
-    new THREE.SphereGeometry(22, 20, 20),
-    new THREE.MeshBasicMaterial({ color: 0xc8d6ee, transparent: true, opacity: 0.25, fog: false, depthWrite: false })
-  );
-  moon.add(moonHalo, moonCore);
-  moon.position.set(-260, 380, 380);
-  scene.add(moon);
+  scene.add(moonVisual);
 
-  // Cloud groups: ~6 cubes per cloud, irregular layout, softer opacity
+  // Stars — a few hundred white points on a sphere, only visible at night.
+  const starCount = 400;
+  const starGeo = new THREE.BufferGeometry();
+  const starPos = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i++) {
+    // Distribute on upper hemisphere
+    const u = Math.random(), v = 0.5 + Math.random() * 0.5;
+    const theta = u * Math.PI * 2;
+    const phi = Math.acos(v * 2 - 1);
+    const r = 650;
+    starPos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+    starPos[i * 3 + 1] = r * Math.cos(phi);
+    starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  const starMat = new THREE.PointsMaterial({
+    color: 0xffffff, size: 2.5, sizeAttenuation: false,
+    transparent: true, opacity: 0, depthWrite: false, fog: false,
+  });
+  starsMesh = new THREE.Points(starGeo, starMat);
+  scene.add(starsMesh);
+
+  // Clouds — same as before, but slightly brighter so they pop at noon
   const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.78, fog: false });
   for (let i = 0; i < 16; i++) {
     const cloud = new THREE.Group();
@@ -112,6 +133,97 @@ function buildSkyDome() {
   }
 }
 buildSkyDome();
+
+// ─── Day / night cycle ────────────────────────────────────────────────────
+// One full day = `period` real-time seconds. The cycle keeps running even
+// outside an active match so the menu looks alive too.
+const dayCycle = {
+  time:   90,    // seconds into the cycle at start (90 = morning)
+  period: 480,   // 8 minutes per full day
+  paused: false,
+};
+// Sun/moon orbit on a tilted ring around the scene
+const SUN_ORBIT_RADIUS = 500;
+const SUN_TILT_Z       = -120; // slight north/south offset so the sun isn't dead-centre
+
+// Palette stops — each represents a phase of the cycle by `t` (0-1).
+// Linearly blended each frame.
+const SKY_PHASES = [
+  // t,    skyTint,     fog,         hemiSky,     hemiGround,  hemiInt, sunInt, sunColor
+  [0.00, 0x1a2a4a, 0x1a2a4a, 0x152540, 0x1a2410, 0.20, 0.05, 0x556088], // midnight
+  [0.20, 0xffb060, 0xffb060, 0xffc9a0, 0x6f7a5a, 0.55, 0.95, 0xffcfa0], // dawn
+  [0.30, 0xb8dcff, 0xb8dcff, 0xb8e0ff, 0x6f8a4a, 0.85, 1.40, 0xfff2cc], // morning
+  [0.50, 0xb8dcff, 0xb8dcff, 0xb8e0ff, 0x6f8a4a, 0.85, 1.40, 0xfff2cc], // noon
+  [0.70, 0xff8a3a, 0xff9c5c, 0xffc9a0, 0x7a6a4a, 0.55, 0.90, 0xff9a55], // dusk
+  [0.85, 0x2a3158, 0x2a3158, 0x2a3850, 0x252040, 0.25, 0.10, 0x6080a8], // twilight
+  [1.00, 0x1a2a4a, 0x1a2a4a, 0x152540, 0x1a2410, 0.20, 0.05, 0x556088], // midnight (wraps)
+];
+
+function lerpPhase(t) {
+  // Find the two stops surrounding t
+  for (let i = 0; i < SKY_PHASES.length - 1; i++) {
+    const a = SKY_PHASES[i], b = SKY_PHASES[i + 1];
+    if (t >= a[0] && t <= b[0]) {
+      const k = (t - a[0]) / (b[0] - a[0]);
+      return {
+        skyTint:     new THREE.Color(a[1]).lerp(new THREE.Color(b[1]), k),
+        fog:         new THREE.Color(a[2]).lerp(new THREE.Color(b[2]), k),
+        hemiSky:     new THREE.Color(a[3]).lerp(new THREE.Color(b[3]), k),
+        hemiGround:  new THREE.Color(a[4]).lerp(new THREE.Color(b[4]), k),
+        hemiInt:     THREE.MathUtils.lerp(a[5], b[5], k),
+        sunInt:      THREE.MathUtils.lerp(a[6], b[6], k),
+        sunColor:    new THREE.Color(a[7]).lerp(new THREE.Color(b[7]), k),
+      };
+    }
+  }
+  // Fallback (shouldn't hit if 0 ≤ t ≤ 1)
+  return null;
+}
+
+function tickDayCycle(dt) {
+  if (!dayCycle.paused) dayCycle.time = (dayCycle.time + dt) % dayCycle.period;
+  const t = dayCycle.time / dayCycle.period;        // 0-1 across the day
+  const phase = lerpPhase(t);
+  if (!phase) return;
+
+  // Sun + moon orbit. Sun at t=0.25 should be due east horizon (rising),
+  // t=0.5 high noon, t=0.75 due west horizon (setting), t=0 midnight.
+  // Translate t into an angle that crosses zenith at t=0.5.
+  const sunAngle = (t - 0.25) * Math.PI * 2;        // 0 at sunrise, π at sunset
+  const sunY     = Math.sin(sunAngle) * SUN_ORBIT_RADIUS;
+  const sunX     = Math.cos(sunAngle) * SUN_ORBIT_RADIUS;
+  if (sunVisual)  sunVisual.position.set(sunX, sunY, SUN_TILT_Z);
+  if (moonVisual) moonVisual.position.set(-sunX, -sunY, -SUN_TILT_Z);
+
+  // Sun/moon brightness fades when below horizon
+  const aboveHorizon = THREE.MathUtils.clamp(sunY / 100, 0, 1);
+  if (sunCoreMat) sunCoreMat.opacity = 0.2 + aboveHorizon * 0.8;
+  if (sunHaloMat) sunHaloMat.opacity = aboveHorizon * 0.35;
+  sunCoreMat.transparent = sunHaloMat.transparent = true;
+  if (moonCoreMat) moonCoreMat.opacity = 0.2 + (1 - aboveHorizon) * 0.8;
+  if (moonHaloMat) moonHaloMat.opacity = (1 - aboveHorizon) * 0.25;
+  moonCoreMat.transparent = moonHaloMat.transparent = true;
+
+  // Stars: only visible at night
+  if (starsMesh) starsMesh.material.opacity = THREE.MathUtils.clamp((1 - aboveHorizon) - 0.2, 0, 0.9);
+
+  // Sky tint + fog
+  if (skyDomeMat) skyDomeMat.color.copy(phase.skyTint);
+  scene.background.copy(phase.skyTint);
+  scene.fog.color.copy(phase.fog);
+
+  // Lights
+  hemi.color.copy(phase.hemiSky);
+  hemi.groundColor.copy(phase.hemiGround);
+  hemi.intensity = phase.hemiInt;
+  sun.color.copy(phase.sunColor);
+  sun.intensity = phase.sunInt;
+  // Have the directional light come FROM the visual sun's direction so
+  // shadows line up with where the sun is in the sky.
+  if (sunY > 0) {
+    sun.position.set(camera.position.x + sunX * 0.1, 40 + sunY * 0.1, camera.position.z + SUN_TILT_Z * 0.1);
+  }
+}
 
 // Postprocessing: bloom for glowing sun, muzzle flashes, fire, explosions
 const composer = new EffectComposer(renderer);
@@ -3159,6 +3271,7 @@ function animate() {
   tickSparks(dt);
   tickPickups(dt, clock.elapsedTime);
   tickNetSync(dt);
+  tickDayCycle(dt);
 
   // Spin the minigun barrels while the player is firing it
   const wep = weapons[currentWeaponId];
@@ -3167,9 +3280,9 @@ function animate() {
     wep.model.userData.barrelGroup.rotation.z += (isShooting ? 18 : 0) * dt;
   }
 
-  // Sun + shadow camera follow the player so shadows stay sharp on the
-  // bigger map. The shadow frustum is small (~70m), but it moves with us.
-  sun.position.set(camera.position.x + 40, 70, camera.position.z + 30);
+  // Shadow camera target follows the player so the small shadow frustum
+  // stays centred. The sun's actual XY position is set by tickDayCycle so
+  // shadows arrive from wherever the sun is in the sky.
   sun.target.position.set(camera.position.x, 0, camera.position.z);
   sun.target.updateMatrixWorld();
 
@@ -4092,4 +4205,5 @@ window.__fps = {
   tickContinuousFire, damageBotsInCone,
   net, remotePlayers, ensureRemoteAvatar, removeRemoteAvatar,
   keys, isTouch, touchState, tickTouchInput,
+  dayCycle, tickDayCycle, sunVisual, moonVisual, starsMesh,
 };
