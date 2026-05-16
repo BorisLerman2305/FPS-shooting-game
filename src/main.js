@@ -190,7 +190,9 @@ const WEATHER_HEIGHT    = 28;
 
 const weather = {
   type: 'clear',         // 'clear' | 'rain' | 'snow'
-  changeTimer: 25,       // seconds until next roll
+  // First roll fires fast so testers see weather almost immediately,
+  // then re-rolls follow the regular cadence.
+  changeTimer: 8,
   particles: null,
   positions: null,
   velocities: null,
@@ -229,8 +231,8 @@ function setWeather(type) {
   const m = weather.particles.material;
   if (type === 'rain') {
     m.color.set(0x9eb8d4);
-    m.size = 0.18;
-    m.opacity = 0.65;
+    m.size = 0.28;        // up from 0.18 — easier to see
+    m.opacity = 0.80;     // up from 0.65
     for (let i = 0; i < WEATHER_PARTICLES; i++) {
       weather.velocities[i * 3]     = -1.5 + Math.random() * 0.4;
       weather.velocities[i * 3 + 1] = -22 - Math.random() * 6;
@@ -252,17 +254,17 @@ function setWeather(type) {
 
 function tickWeather(dt) {
   if (!weather.particles) return;
-  // Random transitions
+  // Random transitions — more frequent now so it actually shows up during play
   weather.changeTimer -= dt;
   if (weather.changeTimer <= 0) {
     if (weather.type === 'clear') {
       const r = Math.random();
-      if (r < 0.18) setWeather('rain');
-      else if (r < 0.28) setWeather('snow');
-      weather.changeTimer = 45 + Math.random() * 60;
+      if (r < 0.40) setWeather('rain');         // up from 0.18
+      else if (r < 0.65) setWeather('snow');    // up from 0.28
+      weather.changeTimer = 25 + Math.random() * 35;   // re-roll faster
     } else {
-      if (Math.random() < 0.65) setWeather('clear');
-      weather.changeTimer = 30 + Math.random() * 50;
+      if (Math.random() < 0.55) setWeather('clear');
+      weather.changeTimer = 25 + Math.random() * 35;
     }
   }
   if (weather.type === 'clear') return;
@@ -1483,6 +1485,11 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Minus'  && playerOwns('minigun'))    setWeapon('minigun');
   // Throw grenade
   if (e.code === 'KeyG') tryThrowGrenade();
+  // Debug weather toggles (keyboard only) — handy for showing the new
+  // visuals on demand instead of waiting for the random roll.
+  if (e.code === 'Comma')   setWeather(weather.type === 'rain' ? 'clear' : 'rain');
+  if (e.code === 'Period')  setWeather(weather.type === 'snow' ? 'clear' : 'snow');
+  if (e.code === 'Slash')   setWeather('clear');
 });
 document.addEventListener('keyup', (e) => {
   if (e.code === 'KeyW') keys.w = false;
