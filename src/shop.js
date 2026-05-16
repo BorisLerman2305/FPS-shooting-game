@@ -53,11 +53,44 @@ export const SHOP_ITEMS = {
     name: 'תיק רימונים', icon: '💣',
     description: 'נשא עד 7 רימונים במקום 5.',
   },
+
+  // ─── Weapon attachments — cheap upgrades that auto-apply each match ─────
+  scopeRifle: {
+    id: 'scopeRifle', kind: 'attach', cost: 80,
+    name: 'כוונת לרובה סער', icon: '🔭',
+    description: 'מוסיף זום (מקש ימני) לרובה הסער — צליפה מדויקת מרחוק.',
+  },
+  bigMagRifle: {
+    id: 'bigMagRifle', kind: 'attach', cost: 60,
+    name: 'מחסנית גדולה — רובה סער', icon: '📦',
+    description: 'מחסנית רובה הסער עולה מ-30 ל-45 כדורים.',
+  },
+  bigMagPistol: {
+    id: 'bigMagPistol', kind: 'attach', cost: 40,
+    name: 'מחסנית גדולה — אקדח', icon: '📦',
+    description: 'מחסנית האקדח עולה מ-12 ל-18 כדורים.',
+  },
+  fastReload: {
+    id: 'fastReload', kind: 'attach', cost: 120,
+    name: 'טעינה מהירה', icon: '⏱️',
+    description: 'כל זמני הטעינה מתקצרים ב-35% — לכל הנשקים.',
+  },
+  extraPellets: {
+    id: 'extraPellets', kind: 'attach', cost: 80,
+    name: 'קליעי-על לרובה ציד', icon: '💥',
+    description: 'רובה ציד יורה 11 כדוריות במקום 8 — פיזור רחב, נזק עצום.',
+  },
+  sharpSword: {
+    id: 'sharpSword', kind: 'attach', cost: 70,
+    name: 'חרב מחודדת', icon: '⚔️',
+    description: 'נזק החרב עולה מ-60 ל-90 — הריגה בחתך אחד.',
+  },
 };
 
 export const SHOP_ORDER = [
   'rpg', 'tommyGun', 'lightsaber', 'crossbow', 'minigun',
   'hpBoost', 'staminaBoost', 'grenadeMax',
+  'scopeRifle', 'bigMagRifle', 'bigMagPistol', 'fastReload', 'extraPellets', 'sharpSword',
 ];
 
 export function isOwned(user, itemId) {

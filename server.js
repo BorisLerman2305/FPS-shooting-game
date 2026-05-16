@@ -29,6 +29,13 @@ const SHOP_ITEMS = {
   hpBoost:       { kind: 'perk',   cost: 200 },
   staminaBoost:  { kind: 'perk',   cost: 150 },
   grenadeMax:    { kind: 'perk',   cost: 100 },
+  // Weapon attachments — cheap-ish, one-time buy, auto-active in every match
+  scopeRifle:    { kind: 'attach', cost: 80  },
+  bigMagRifle:   { kind: 'attach', cost: 60  },
+  bigMagPistol:  { kind: 'attach', cost: 40  },
+  fastReload:    { kind: 'attach', cost: 120 },
+  extraPellets:  { kind: 'attach', cost: 80  },
+  sharpSword:    { kind: 'attach', cost: 70  },
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

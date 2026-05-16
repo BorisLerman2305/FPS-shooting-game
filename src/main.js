@@ -1558,9 +1558,15 @@ function startGame(diffKey, overrideKillTarget, overrideMode, overrideTheme) {
   // (Stamina cap honours the staminaBoost perk if owned.)
   stamina.value = game.staminaMax || STAMINA_MAX;
   stamina.lockedOut = false;
+  // Clone each weapon's conf for this round so attachments can mutate freely
+  // without leaking into WEAPONS[id] (shared base definition).
   for (const id of Object.keys(weapons)) {
-    weapons[id].ammo = WEAPONS[id].maxAmmo;
-    weapons[id].reserve = WEAPONS[id].reserveStart ?? 0;
+    weapons[id].conf = { ...WEAPONS[id] };
+  }
+  applyAttachments();
+  for (const id of Object.keys(weapons)) {
+    weapons[id].ammo = weapons[id].conf.maxAmmo;
+    weapons[id].reserve = weapons[id].conf.reserveStart ?? 0;
     weapons[id].reloading = false;
     weapons[id].recoilTimer = 0;
     weapons[id].swingTimer = 0;
@@ -2283,10 +2289,30 @@ function updateWeaponHUD() {
   }
 }
 
-// Returns true if the player has unlocked the shop item (or it's a base weapon).
+// Returns true if the player has unlocked the shop item.
+// Base weapons (in WEAPONS, not flagged shopOnly) are always free; everything
+// else — shop weapons, perks, attachments — needs to be in user.ownedItems.
 function playerOwns(itemId) {
-  if (!WEAPONS[itemId] || !WEAPONS[itemId].shopOnly) return true; // base weapons free
+  if (WEAPONS[itemId] && !WEAPONS[itemId].shopOnly) return true; // base weapons free
   return !!(session.user && (session.user.ownedItems || []).includes(itemId));
+}
+
+// Apply weapon attachments to this round's cloned confs.
+// Must run AFTER weapons[id].conf has been reset to a fresh copy of WEAPONS[id]
+// and BEFORE ammo/reserve are filled, so the new caps take effect immediately.
+function applyAttachments() {
+  if (playerOwns('scopeRifle')   && weapons.rifle)    weapons.rifle.conf.canZoom = true;
+  if (playerOwns('bigMagRifle')  && weapons.rifle)    weapons.rifle.conf.maxAmmo = 45;
+  if (playerOwns('bigMagPistol') && weapons.pistol)   weapons.pistol.conf.maxAmmo = 18;
+  if (playerOwns('extraPellets') && weapons.shotgun)  weapons.shotgun.conf.pellets = 11;
+  if (playerOwns('sharpSword')   && weapons.sword)    weapons.sword.conf.damage = 90;
+  if (playerOwns('fastReload')) {
+    for (const id of Object.keys(weapons)) {
+      if (weapons[id].conf.reloadTime != null) {
+        weapons[id].conf.reloadTime = weapons[id].conf.reloadTime * 0.65;
+      }
+    }
+  }
 }
 
 function setWeapon(id) {
