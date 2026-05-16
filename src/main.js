@@ -180,6 +180,122 @@ function lerpPhase(t) {
   return null;
 }
 
+// ─── Weather (rain + snow) ────────────────────────────────────────────────
+// Particle pool follows the player so the precipitation always lands near
+// us. Weather rolls a die every ~30-90s to switch between clear / rain /
+// snow. Tints sky + lights so the world looks heavier in bad weather.
+const WEATHER_PARTICLES = 700;
+const WEATHER_RADIUS    = 45;
+const WEATHER_HEIGHT    = 28;
+
+const weather = {
+  type: 'clear',         // 'clear' | 'rain' | 'snow'
+  changeTimer: 25,       // seconds until next roll
+  particles: null,
+  positions: null,
+  velocities: null,
+  swirlPhase: 0,
+};
+
+function createWeatherSystem() {
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(WEATHER_PARTICLES * 3);
+  const velocities = new Float32Array(WEATHER_PARTICLES * 3);
+  for (let i = 0; i < WEATHER_PARTICLES; i++) {
+    positions[i * 3]     = (Math.random() - 0.5) * WEATHER_RADIUS * 2;
+    positions[i * 3 + 1] = Math.random() * WEATHER_HEIGHT;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * WEATHER_RADIUS * 2;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.4,
+    transparent: true,
+    opacity: 0,                // invisible while clear
+    sizeAttenuation: true,
+    depthWrite: false,
+    fog: true,
+  });
+  weather.particles = new THREE.Points(geo, mat);
+  weather.particles.frustumCulled = false; // pool moves with the player
+  scene.add(weather.particles);
+  weather.positions = positions;
+  weather.velocities = velocities;
+}
+
+function setWeather(type) {
+  if (!weather.particles) return;
+  weather.type = type;
+  const m = weather.particles.material;
+  if (type === 'rain') {
+    m.color.set(0x9eb8d4);
+    m.size = 0.18;
+    m.opacity = 0.65;
+    for (let i = 0; i < WEATHER_PARTICLES; i++) {
+      weather.velocities[i * 3]     = -1.5 + Math.random() * 0.4;
+      weather.velocities[i * 3 + 1] = -22 - Math.random() * 6;
+      weather.velocities[i * 3 + 2] = 0;
+    }
+  } else if (type === 'snow') {
+    m.color.set(0xffffff);
+    m.size = 0.55;
+    m.opacity = 0.9;
+    for (let i = 0; i < WEATHER_PARTICLES; i++) {
+      weather.velocities[i * 3]     = (Math.random() - 0.5) * 1.2;
+      weather.velocities[i * 3 + 1] = -1.4 - Math.random() * 0.6;
+      weather.velocities[i * 3 + 2] = (Math.random() - 0.5) * 1.2;
+    }
+  } else {
+    m.opacity = 0;
+  }
+}
+
+function tickWeather(dt) {
+  if (!weather.particles) return;
+  // Random transitions
+  weather.changeTimer -= dt;
+  if (weather.changeTimer <= 0) {
+    if (weather.type === 'clear') {
+      const r = Math.random();
+      if (r < 0.18) setWeather('rain');
+      else if (r < 0.28) setWeather('snow');
+      weather.changeTimer = 45 + Math.random() * 60;
+    } else {
+      if (Math.random() < 0.65) setWeather('clear');
+      weather.changeTimer = 30 + Math.random() * 50;
+    }
+  }
+  if (weather.type === 'clear') return;
+
+  const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+  const pos = weather.positions, vel = weather.velocities;
+  weather.swirlPhase += dt;
+
+  for (let i = 0; i < WEATHER_PARTICLES; i++) {
+    const ix = i * 3;
+    pos[ix]     += vel[ix]     * dt;
+    pos[ix + 1] += vel[ix + 1] * dt;
+    pos[ix + 2] += vel[ix + 2] * dt;
+    if (weather.type === 'snow') {
+      // Lazy sin-wave swirl so flakes wobble as they fall
+      pos[ix]     += Math.sin(pos[ix + 1] * 0.4 + i) * 0.6 * dt;
+      pos[ix + 2] += Math.cos(pos[ix + 1] * 0.4 + i * 0.5) * 0.6 * dt;
+    }
+    // Recycle when below ground or too far from the player
+    const dx = pos[ix] - cx, dz = pos[ix + 2] - cz;
+    const tooFar = dx * dx + dz * dz > WEATHER_RADIUS * WEATHER_RADIUS;
+    if (pos[ix + 1] < cy - 6 || tooFar) {
+      pos[ix]     = cx + (Math.random() - 0.5) * WEATHER_RADIUS * 2;
+      pos[ix + 1] = cy + WEATHER_HEIGHT - Math.random() * 6;
+      pos[ix + 2] = cz + (Math.random() - 0.5) * WEATHER_RADIUS * 2;
+    }
+  }
+  weather.particles.geometry.attributes.position.needsUpdate = true;
+}
+
+// Initialise the particle system once at boot
+createWeatherSystem();
+
 function tickDayCycle(dt) {
   if (!dayCycle.paused) dayCycle.time = (dayCycle.time + dt) % dayCycle.period;
   const t = dayCycle.time / dayCycle.period;        // 0-1 across the day
@@ -218,6 +334,24 @@ function tickDayCycle(dt) {
   hemi.intensity = phase.hemiInt;
   sun.color.copy(phase.sunColor);
   sun.intensity = phase.sunInt;
+
+  // Weather tint applied on top of the day-cycle palette — stormy when
+  // raining, washed-out when snowing.
+  if (weather.type === 'rain') {
+    const grey = new THREE.Color(0x5a6878);
+    scene.background.lerp(grey, 0.45);
+    scene.fog.color.lerp(grey, 0.45);
+    if (skyDomeMat) skyDomeMat.color.lerp(grey, 0.45);
+    hemi.intensity *= 0.68;
+    sun.intensity  *= 0.55;
+  } else if (weather.type === 'snow') {
+    const pale = new THREE.Color(0xd6dde6);
+    scene.background.lerp(pale, 0.30);
+    scene.fog.color.lerp(pale, 0.30);
+    if (skyDomeMat) skyDomeMat.color.lerp(pale, 0.30);
+    hemi.intensity *= 0.85;
+    sun.intensity  *= 0.80;
+  }
   // Have the directional light come FROM the visual sun's direction so
   // shadows line up with where the sun is in the sky.
   if (sunY > 0) {
@@ -671,45 +805,47 @@ const _stoneBlockMat = new THREE.MeshLambertMaterial({ map: TEX_STONE });
 const _cobbleBlockMat = new THREE.MeshLambertMaterial({ map: TEX_COBBLE });
 
 function makeTree(x, z, scale = 1) {
-  // Trunk = stack of 1×1×1 log blocks (height varies with scale: 3-5 blocks)
-  const trunkHeight = Math.round(3 + scale * 1.5);  // ~3 short, ~5 tall
+  const trunkHeight = Math.round(3 + scale * 1.5);
+  const treeParts = [];          // all meshes that belong to this tree
   let trunkBase = null;
   for (let h = 0; h < trunkHeight; h++) {
     const log = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _logFaceMats);
     log.position.set(x, 0.5 + h, z);
     log.castShadow = true; log.receiveShadow = true;
     scene.add(log); addArenaMesh(log);
+    treeParts.push(log);
     if (h === 0) trunkBase = log;
   }
-  // Canopy = a 5×3×5 leaf cluster, irregular (corners often missing)
-  const canopyY = trunkHeight - 1;          // overlap top log so it's "inside" canopy
+  const canopyY = trunkHeight - 1;
   for (let dy = 0; dy < 3; dy++) {
-    const radius = (dy === 0 || dy === 2) ? 1 : 2; // narrower top / bottom
+    const radius = (dy === 0 || dy === 2) ? 1 : 2;
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dz = -radius; dz <= radius; dz++) {
-        // Skip corners on the widest layer for a more organic shape
         if (dy === 1 && Math.abs(dx) === 2 && Math.abs(dz) === 2 && Math.random() > 0.4) continue;
-        // Don't place a leaf where the trunk already is (only at trunk height)
         if (dx === 0 && dz === 0 && dy < 2) continue;
         const leaf = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), _leafMat);
         leaf.position.set(x + dx, canopyY + dy + 0.5, z + dz);
         leaf.castShadow = true; leaf.receiveShadow = true;
         scene.add(leaf); addArenaMesh(leaf);
+        treeParts.push(leaf);
       }
     }
   }
-  // Collider on the trunk only — players can walk through leaves like in MC
   const box = new THREE.Box3().setFromObject(trunkBase);
-  box.max.y += trunkHeight - 1; // collider covers the full trunk column
+  box.max.y += trunkHeight - 1;
   box.expandByScalar(0.05);
   colliders.push({ mesh: trunkBase, box });
+  // Mark trunk as destructible — 3 shots to fell the whole tree + leaves
+  trunkBase.userData.destructible = {
+    hp: 3, connected: treeParts.filter(p => p !== trunkBase), kind: 'tree',
+  };
 }
 
 // ─── Block-style rocks: small clusters of stone cubes ────────────────────
 function makeRock(x, z, scale = 1) {
-  // Number of cubes scales with `scale` so big landmark rocks feel chunky
   const cubes = Math.max(1, Math.round(1 + scale * 1.5));
   let rep = null;
+  const cluster = [];
   for (let i = 0; i < cubes; i++) {
     const sz = 0.7 + Math.random() * 0.6 + scale * 0.3;
     const ox = (Math.random() - 0.5) * 1.2 * scale;
@@ -723,13 +859,17 @@ function makeRock(x, z, scale = 1) {
     stone.position.set(x + ox, oy, z + oz);
     stone.castShadow = true; stone.receiveShadow = true;
     scene.add(stone); addArenaMesh(stone);
+    cluster.push(stone);
     if (i === 0) rep = stone;
   }
-  // Single AABB collider around the centre cube — good enough for a rock cluster
   if (rep) {
     const box = new THREE.Box3().setFromObject(rep);
     box.expandByScalar(0.4 * scale);
     colliders.push({ mesh: rep, box });
+    // 2 shots crumble the whole cluster
+    rep.userData.destructible = {
+      hp: 2, connected: cluster.filter(s => s !== rep), kind: 'rock',
+    };
   }
 }
 
@@ -742,6 +882,8 @@ function makeCrate(x, z, size = 1) {
   scene.add(crate); addArenaMesh(crate);
   const box = new THREE.Box3().setFromObject(crate);
   colliders.push({ mesh: crate, box });
+  // Crates shatter in a single hit
+  crate.userData.destructible = { hp: 1, connected: [], kind: 'crate' };
 }
 
 // ─── Flowers + tall grass — flat decorations on the ground ──────────────
@@ -1080,6 +1222,40 @@ function bossConfFor(diffKey) {
     sight: c.sight + 20,
     defaultQuota: 1,
     isBoss: true,
+    archetype: 'tank',
+  };
+}
+
+// ─── Bot archetypes (special variants beyond the standard grunt) ─────────
+// `archetype` on a bot.conf shifts its AI behaviour:
+//   tank      — default; chases + shoots
+//   sniper    — high HP only fires at long range, slow rate
+//   kamikaze  — sprints toward the player; explodes on contact
+//   healer    — runs toward injured bots and heals them; no direct damage
+function sniperConfFor(diffKey) {
+  const c = DIFFICULTIES[diffKey];
+  return {
+    label: c.label + ' צלף', hp: c.hp * 1.4, damage: c.damage * 2.5,
+    speed: c.speed * 0.7, fireInterval: c.fireInterval * 2.0,
+    sight: c.sight + 30, isBoss: false, archetype: 'sniper',
+  };
+}
+function kamikazeConfFor(diffKey) {
+  const c = DIFFICULTIES[diffKey];
+  return {
+    label: c.label + ' קמיקזה', hp: c.hp * 0.6, damage: c.damage * 4,
+    speed: c.speed * 1.6, fireInterval: 999, sight: c.sight + 5,
+    isBoss: false, archetype: 'kamikaze',
+    explodeRadius: 4.5,
+  };
+}
+function healerConfFor(diffKey) {
+  const c = DIFFICULTIES[diffKey];
+  return {
+    label: c.label + ' רופא', hp: c.hp * 1.2, damage: 0,
+    speed: c.speed * 1.1, fireInterval: 1.0, sight: c.sight,
+    isBoss: false, archetype: 'healer',
+    healAmount: 12, healRange: 4,
   };
 }
 
@@ -2132,6 +2308,48 @@ function createBot(spawnX, spawnZ, conf) {
     aura.position.y = 1.4;
     group.add(aura);
   }
+  // Archetype-specific visuals — only added for non-boss special bots
+  const arch = conf.archetype || 'tank';
+  if (!isBoss && arch === 'sniper') {
+    // A long "scope tube" sticking out of the head — silhouette of a rifle
+    const scope = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.05, 1.2, 10),
+      new THREE.MeshLambertMaterial({ color: 0x303030 })
+    );
+    scope.rotation.x = Math.PI / 2;
+    scope.position.set(0, HEAD_Y - 0.05, -0.7);
+    group.add(scope);
+  } else if (!isBoss && arch === 'kamikaze') {
+    // Strapped explosives — red blocks around the torso + pulsing red aura
+    const tntMat = new THREE.MeshLambertMaterial({ color: 0xd22020, emissive: 0x661010, emissiveIntensity: 0.4 });
+    for (let i = 0; i < 4; i++) {
+      const stick = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.36, 0.08), tntMat);
+      const ang = (i / 4) * Math.PI * 2;
+      stick.position.set(Math.cos(ang) * 0.32, TORSO_Y, Math.sin(ang) * 0.18);
+      group.add(stick);
+    }
+    const aura = new THREE.Mesh(
+      new THREE.SphereGeometry(1.1, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xff5030, transparent: true, opacity: 0.22, depthWrite: false, fog: false })
+    );
+    aura.position.y = TORSO_Y;
+    aura.userData.pulse = true;
+    group.add(aura);
+  } else if (!isBoss && arch === 'healer') {
+    // White cross on the chest + soft green halo
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const crossH = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.04), crossMat);
+    const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.45, 0.04), crossMat);
+    crossH.position.set(0, TORSO_Y, -TORSO_D / 2 - 0.02);
+    crossV.position.set(0, TORSO_Y, -TORSO_D / 2 - 0.02);
+    group.add(crossH, crossV);
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(1.0, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0x55ff7a, transparent: true, opacity: 0.18, depthWrite: false, fog: false })
+    );
+    halo.position.y = TORSO_Y;
+    group.add(halo);
+  }
 
   // HP bar floating above the bot's head — billboarded each frame to face the camera
   const hpBar = new THREE.Group();
@@ -2159,12 +2377,13 @@ function createBot(spawnX, spawnZ, conf) {
   scene.add(group);
 
   return {
-    group,
+    group, conf,
     parts: [body, head], // parts that count as hittable
     legPivotL, legPivotR, armPivotL, armPivotR, head,
     headRestY: HEAD_Y,
     walkPhase: Math.random() * Math.PI * 2,
     isMoving: false,
+    archetype: arch,
     deathTimer: 0,    // when > 0, bot is in falling-corpse animation
     hpBar,
     hpBarFill,
@@ -2244,7 +2463,15 @@ function scheduleRespawn() {
     game.pendingSpawns--;
     if (!game.alive) return;
     if (game.kills + bots.filter(b => b.alive).length >= game.killTarget - 1) return;
-    spawnOneBot(DIFFICULTIES[game.difficulty]);
+    // 30% chance to spawn a special archetype — sniper / kamikaze / healer.
+    // The remaining 70% are standard "tank" grunts.
+    const r = Math.random();
+    let pickConf;
+    if      (r < 0.10) pickConf = sniperConfFor(game.difficulty);
+    else if (r < 0.20) pickConf = kamikazeConfFor(game.difficulty);
+    else if (r < 0.30) pickConf = healerConfFor(game.difficulty);
+    else               pickConf = DIFFICULTIES[game.difficulty];
+    spawnOneBot(pickConf);
   }, 1500);
 }
 
@@ -2283,9 +2510,90 @@ function hasLineOfSight(from, to) {
 
 const _toPlayer = new THREE.Vector3();
 const _from = new THREE.Vector3();
+// Healer behaviour — runs to the most injured bot in range and heals.
+// Falls back to lazy wander if no allies need help.
+const _healTo = new THREE.Vector3();
+function tickHealerAI(bot, dt) {
+  // Find the most injured ally (excluding self + boss + other healers)
+  let target = null, lowestHp = Infinity;
+  for (const ally of bots) {
+    if (!ally.alive || ally === bot) continue;
+    if (ally.hp >= ally.maxHp) continue;
+    if (ally.archetype === 'healer') continue;
+    if (ally.hp < lowestHp) { lowestHp = ally.hp; target = ally; }
+  }
+
+  if (target) {
+    _healTo.subVectors(target.group.position, bot.group.position);
+    _healTo.y = 0;
+    const d = _healTo.length();
+    bot.group.lookAt(target.group.position.x, bot.group.position.y, target.group.position.z);
+    if (d > (bot.conf.healRange || 4)) {
+      const step = bot.speed * dt;
+      bot.group.position.x += (_healTo.x / d) * step;
+      bot.group.position.z += (_healTo.z / d) * step;
+      bot.isMoving = true;
+    } else {
+      // Heal: refill ally HP at healAmount per second
+      bot.isMoving = false;
+      target.hp = Math.min(target.maxHp, target.hp + (bot.conf.healAmount || 10) * dt);
+      const pct = target.hp / target.maxHp;
+      target.hpBarFill.scale.x = pct;
+      target.hpBarFill.material.color.setHex(pct > 0.6 ? 0x4caf50 : pct > 0.3 ? 0xffc107 : 0xf44336);
+    }
+  } else {
+    // No one to heal — wander
+    bot.wanderTimer -= dt;
+    if (bot.wanderTimer <= 0) {
+      bot.wanderTarget.set(
+        THREE.MathUtils.clamp(bot.group.position.x + (Math.random() - 0.5) * 18, -ARENA + 2, ARENA - 2),
+        0,
+        THREE.MathUtils.clamp(bot.group.position.z + (Math.random() - 0.5) * 18, -ARENA + 2, ARENA - 2),
+      );
+      bot.wanderTimer = 2 + Math.random() * 3;
+    }
+    const wx = bot.wanderTarget.x - bot.group.position.x;
+    const wz = bot.wanderTarget.z - bot.group.position.z;
+    const wd = Math.hypot(wx, wz);
+    if (wd > 0.5) {
+      const step = bot.speed * 0.4 * dt;
+      bot.group.position.x += (wx / wd) * step;
+      bot.group.position.z += (wz / wd) * step;
+      bot.group.lookAt(bot.wanderTarget.x, bot.group.position.y, bot.wanderTarget.z);
+      bot.isMoving = true;
+    } else {
+      bot.isMoving = false;
+    }
+  }
+
+  // Walk animation + HP bar billboard (shared with the main loop)
+  if (bot.isMoving) {
+    bot.walkPhase += dt * 7;
+    const swing = Math.sin(bot.walkPhase) * 0.5;
+    bot.legPivotL.rotation.x =  swing;
+    bot.legPivotR.rotation.x = -swing;
+    bot.armPivotL.rotation.x = -swing * 0.7;
+    bot.armPivotR.rotation.x =  swing * 0.7;
+  } else {
+    bot.legPivotL.rotation.x *= 0.85;
+    bot.legPivotR.rotation.x *= 0.85;
+    bot.armPivotL.rotation.x *= 0.85;
+    bot.armPivotR.rotation.x *= 0.85;
+  }
+  const worldPos = bot.hpBar.getWorldPosition(new THREE.Vector3());
+  bot.hpBar.lookAt(camera.position.x, worldPos.y, camera.position.z);
+  bot.hpBar.rotation.y -= bot.group.rotation.y;
+}
+
 function updateBots(dt) {
   for (const bot of bots) {
     if (!bot.alive) continue;
+
+    // ─── Healer archetype: ignore the player, run to wounded allies ────
+    if (bot.archetype === 'healer') {
+      tickHealerAI(bot, dt);
+      continue;
+    }
 
     _toPlayer.set(
       camera.position.x - bot.group.position.x,
@@ -2303,23 +2611,51 @@ function updateBots(dt) {
       // Face player
       bot.group.lookAt(camera.position.x, bot.group.position.y, camera.position.z);
 
-      // Move toward player but keep some distance
-      if (dist > BOT_KEEP_DISTANCE) {
+      // Kamikaze: charge until point-blank, then explode
+      if (bot.archetype === 'kamikaze') {
         const step = bot.speed * dt;
-        bot.group.position.x += (_toPlayer.x / dist) * step;
-        bot.group.position.z += (_toPlayer.z / dist) * step;
-        bot.isMoving = true;
+        if (dist > 1.6) {
+          bot.group.position.x += (_toPlayer.x / dist) * step;
+          bot.group.position.z += (_toPlayer.z / dist) * step;
+          bot.isMoving = true;
+        } else {
+          bot.isMoving = false;
+          // Boom — explode AT the player using the standard AOE pipeline,
+          // then mark the bot itself as dead (counts as a kill + coin).
+          explodeAt(bot.group.position.clone(), bot.damage, bot.conf.explodeRadius || 4);
+          damageBot(bot, 9999);
+          continue;
+        }
       } else {
-        bot.isMoving = false;
-      }
+        // Sniper: keep a long distance; only fire from afar
+        const sniperPrefDist = bot.archetype === 'sniper' ? Math.max(28, bot.sightRange * 0.7) : BOT_KEEP_DISTANCE;
+        if (dist > sniperPrefDist + 4) {
+          const step = bot.speed * dt;
+          bot.group.position.x += (_toPlayer.x / dist) * step;
+          bot.group.position.z += (_toPlayer.z / dist) * step;
+          bot.isMoving = true;
+        } else if (bot.archetype === 'sniper' && dist < sniperPrefDist - 4) {
+          // Back off — kite the player
+          const step = bot.speed * 0.6 * dt;
+          bot.group.position.x -= (_toPlayer.x / dist) * step;
+          bot.group.position.z -= (_toPlayer.z / dist) * step;
+          bot.isMoving = true;
+        } else {
+          bot.isMoving = false;
+        }
 
-      // Shoot when in attack range
-      bot.fireCooldown -= dt;
-      if (dist < BOT_ATTACK_RANGE && bot.fireCooldown <= 0) {
-        bot.fireCooldown = bot.fireInterval;
-        // Easy bots miss sometimes; harder bots hit more reliably
-        const hitChance = bot.damage <= 5 ? 0.55 : bot.damage <= 8 ? 0.75 : 0.9;
-        if (Math.random() < hitChance) damagePlayer(bot.damage);
+        // Shoot when in attack range. Snipers fire from much further.
+        const fireMaxDist = bot.archetype === 'sniper' ? bot.sightRange : BOT_ATTACK_RANGE;
+        const fireMinDist = bot.archetype === 'sniper' ? 18 : 0;
+        bot.fireCooldown -= dt;
+        if (dist < fireMaxDist && dist >= fireMinDist && bot.fireCooldown <= 0 && bot.damage > 0) {
+          bot.fireCooldown = bot.fireInterval;
+          // Snipers are crack shots
+          const hitChance = bot.archetype === 'sniper'
+            ? 0.95
+            : bot.damage <= 5 ? 0.55 : bot.damage <= 8 ? 0.75 : 0.9;
+          if (Math.random() < hitChance) damagePlayer(bot.damage);
+        }
       }
     } else {
       // Wander
@@ -2519,8 +2855,10 @@ function fireRanged(w) {
       const msg = { type: 'pvp-hit', targetId, amount: dmg };
       if (net.isHost()) net.sendTo(targetId, msg);
       else net.sendToHost(msg);
-      // Visual feedback for the shooter — small spark on the avatar
       spawnHitSparks(hit.point, hit.face.normal);
+    } else if (hit.object.userData && hit.object.userData.destructible) {
+      // Hit a destructible scenery block — chip its HP, break it on zero
+      damageDestructible(hit.object, hit.point, hit.face.normal);
     } else {
       addBulletHole(hit);
     }
@@ -3138,6 +3476,35 @@ function tickProjectiles(dt) {
   }
 }
 
+// ─── Destructible scenery ────────────────────────────────────────────────
+// Trees, rocks and crates carry a `userData.destructible = { hp, connected }`
+// payload. Each bullet impact subtracts 1 HP; on zero the mesh + every
+// connected piece (leaves, sibling rocks) vanishes with a spark burst.
+function damageDestructible(mesh, point, normal) {
+  const d = mesh.userData.destructible;
+  if (!d) return;
+  d.hp -= 1;
+  // Loud spark on every hit so the player can tell the block is taking damage
+  spawnHitSparks(point, normal);
+  if (d.hp > 0) return;
+  // Final blow — remove the mesh + all connected meshes + collider
+  scene.remove(mesh);
+  for (const m of d.connected || []) scene.remove(m);
+  // Drop from the collider list (linear scan, OK at a few hundred entries)
+  for (let i = colliders.length - 1; i >= 0; i--) {
+    if (colliders[i].mesh === mesh) { colliders.splice(i, 1); break; }
+  }
+  // Confetti burst — a few extra sparks pointing every which way
+  const burstPoint = mesh.position.clone();
+  for (let i = 0; i < 8; i++) {
+    spawnHitSparks(burstPoint, new THREE.Vector3(
+      (Math.random() - 0.5) * 2,
+      0.6 + Math.random() * 0.6,
+      (Math.random() - 0.5) * 2,
+    ).normalize());
+  }
+}
+
 // Hit sparks — small bright particles when bullets impact a wall/object
 const sparks = [];
 const sparkGeo = new THREE.SphereGeometry(0.04, 4, 3);
@@ -3272,6 +3639,7 @@ function animate() {
   tickPickups(dt, clock.elapsedTime);
   tickNetSync(dt);
   tickDayCycle(dt);
+  tickWeather(dt);
 
   // Spin the minigun barrels while the player is firing it
   const wep = weapons[currentWeaponId];
@@ -4206,4 +4574,5 @@ window.__fps = {
   net, remotePlayers, ensureRemoteAvatar, removeRemoteAvatar,
   keys, isTouch, touchState, tickTouchInput,
   dayCycle, tickDayCycle, sunVisual, moonVisual, starsMesh,
+  weather, setWeather, tickWeather,
 };
