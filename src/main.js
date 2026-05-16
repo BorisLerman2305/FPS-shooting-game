@@ -3740,6 +3740,8 @@ function updateOverlayUserUI() {
   const adminBadge = document.getElementById('adminBadge');
   const adminBtn = document.getElementById('adminBtn');
   const shopBtn = document.getElementById('shopBtn');
+  const challengesBtn = document.getElementById('challengesBtn');
+  const achievementsBtn = document.getElementById('achievementsBtn');
   const userCoinsEl = document.getElementById('userCoins');
   if (session.user) {
     userBarEl.textContent = session.user.name;
@@ -3749,10 +3751,12 @@ function updateOverlayUserUI() {
     userStatsEl.style.display = '';
     adminBadge.classList.toggle('hidden', !session.user.isAdmin);
     adminBtn.classList.toggle('hidden', !session.user.isAdmin);
-    // Coin pill + shop button are logged-in only
+    // Coin pill + shop / challenges / achievements buttons are logged-in only
     userCoinsEl.textContent = '💰 ' + (session.user.stats.coins || 0);
     userCoinsEl.classList.remove('hidden');
     shopBtn.classList.remove('hidden');
+    if (challengesBtn)   challengesBtn.classList.remove('hidden');
+    if (achievementsBtn) achievementsBtn.classList.remove('hidden');
   } else {
     userBarEl.textContent = 'אורח';
     userStatsEl.style.display = 'none';
@@ -3760,6 +3764,8 @@ function updateOverlayUserUI() {
     adminBtn.classList.add('hidden');
     userCoinsEl.classList.add('hidden');
     shopBtn.classList.add('hidden');
+    if (challengesBtn)   challengesBtn.classList.add('hidden');
+    if (achievementsBtn) achievementsBtn.classList.add('hidden');
   }
   // Show / hide shop-weapon loadout buttons based on ownership
   document.querySelectorAll('#overlay .loadout-picks button[data-shop]').forEach(b => {
