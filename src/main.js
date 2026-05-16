@@ -799,8 +799,8 @@ const MAP_THEMES = {
     label: '❄️ שלג',  groundTint: 0xe8f1ff, skyTint: 0xdce5f0, fogTint: 0xe6ecf2,
     rockTint: 0xcfd6e0, treeKind: 'pine',   flowers: false,
   },
-  nether: {
-    label: '🔥 נתר',  groundTint: 0x9a3a2a, skyTint: 0xff5030, fogTint: 0x6a1c0c,
+  lava: {
+    label: '🔥 לבה',  groundTint: 0x9a3a2a, skyTint: 0xff5030, fogTint: 0x6a1c0c,
     rockTint: 0x7a2a18, treeKind: 'dead',   flowers: false,
   },
 };
