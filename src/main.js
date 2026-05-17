@@ -5401,9 +5401,10 @@ function tickTouchInput() {
   keys.s = fwd < -0.2;
   keys.a = right < -0.2;
   keys.d = right >  0.2;
-  // Sprint is intentional only — held via the ⚡ button. Auto-engaging on a
-  // joystick push past 0.85 felt like the stick was always sprinting.
-  keys.shift = touchState.sprinting;
+  // Auto-sprint: shove the stick FORWARD past 0.85 and you start running.
+  // We gate on forward motion specifically so strafing or back-pedaling at
+  // max doesn't auto-sprint (which felt twitchy in earlier playtesting).
+  keys.shift = fwd > 0.85;
 
   // Look — manually rotate the camera. YXZ Euler keeps pitch/yaw decoupled.
   if (touchState.lookDX !== 0 || touchState.lookDY !== 0) {

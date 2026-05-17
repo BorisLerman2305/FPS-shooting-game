@@ -31,11 +31,13 @@ export function setupTouchControls({ onJump, onReload, onGrenade } = {}) {
 
   setupJoystick();
   setupLookArea();
-  setupHoldButton('touchFire',   () => { touchState.firing = true; },   () => { touchState.firing = false; });
-  setupHoldButton('touchSprint', () => { touchState.sprinting = true; }, () => { touchState.sprinting = false; });
+  setupHoldButton('touchFire', () => { touchState.firing = true; }, () => { touchState.firing = false; });
   setupTapButton('touchJump',    onJump);
   setupTapButton('touchReload',  onReload);
   setupTapButton('touchGrenade', onGrenade);
+  // Sprint used to be a dedicated button; it's now auto-engaged from the
+  // joystick magnitude in tickTouchInput (main.js). touchState.sprinting
+  // stays in the export shape for back-compat but is no longer touched here.
 
   // Block iOS double-tap zoom / pull-to-refresh while playing
   document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });

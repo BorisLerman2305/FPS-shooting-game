@@ -744,11 +744,10 @@
       left: calc(20px + env(safe-area-inset-left));
       bottom: calc(20px + env(safe-area-inset-bottom));
     }
-    body.is-touch #touchControls .fire    { right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); }
-    body.is-touch #touchControls .jump    { right: calc(132px + env(safe-area-inset-right)); bottom: calc(62px + env(safe-area-inset-bottom)); }
-    body.is-touch #touchControls .reload  { right: calc(132px + env(safe-area-inset-right)); bottom: calc(142px + env(safe-area-inset-bottom)); }
-    body.is-touch #touchControls .grenade { right: calc(20px + env(safe-area-inset-right)); bottom: calc(132px + env(safe-area-inset-bottom)); }
-    body.is-touch #touchControls .sprint  { left: calc(166px + env(safe-area-inset-left)); bottom: calc(62px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .fire    { right: calc(20px + env(safe-area-inset-right));  bottom: calc(20px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .jump    { right: calc(140px + env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .reload  { right: calc(26px + env(safe-area-inset-right));  bottom: calc(150px + env(safe-area-inset-bottom)); }
+    body.is-touch #touchControls .grenade { right: calc(108px + env(safe-area-inset-right)); bottom: calc(170px + env(safe-area-inset-bottom)); }
 
     /* ─── Landscape phone (rotated) — tighter top bar, action buttons hugged to edges */
     @media (orientation: landscape) and (max-height: 500px) {
@@ -772,8 +771,13 @@
       /* Make joystick + buttons a touch smaller in landscape so they don't dominate */
       body.is-touch #touchControls .joystick { width: 110px; height: 110px; }
       body.is-touch #touchControls .joystick .knob { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
-      body.is-touch #touchControls .fire { width: 84px; height: 84px; font-size: 32px; }
-      body.is-touch #touchControls .action-btn { width: 60px; height: 60px; font-size: 24px; }
+      body.is-touch #touchControls .fire { width: 90px; height: 90px; font-size: 32px; }
+      body.is-touch #touchControls .jump { width: 74px; height: 74px; font-size: 28px;
+        right: calc(122px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); }
+      body.is-touch #touchControls .reload  { width: 56px; height: 56px; font-size: 22px;
+        right: calc(22px + env(safe-area-inset-right));  bottom: calc(124px + env(safe-area-inset-bottom)); }
+      body.is-touch #touchControls .grenade { width: 56px; height: 56px; font-size: 22px;
+        right: calc(92px + env(safe-area-inset-right));  bottom: calc(140px + env(safe-area-inset-bottom)); }
     }
 
     /* ─── Very small portrait (older phones) ───────────────────────────── */
@@ -875,13 +879,20 @@
     }
     #touchControls .action-btn:active,
     #touchControls .action-btn.pressed { background: rgba(255, 213, 74, 0.85); color: #000; transform: scale(0.92); }
-    #touchControls .fire { right: 28px; bottom: 28px; width: 100px; height: 100px; font-size: 38px; background: rgba(220, 60, 60, 0.7); }
+    /* ─── Mobile control layout — right-thumb cluster ────────────────────
+       The thumb sits at the bottom-right corner. FIRE and JUMP share the
+       same row right above it so the thumb can pivot between them without
+       leaving the comfort zone. RELOAD + GRENADE are smaller and higher
+       up — used less often, the reach is acceptable. Sprint isn't a
+       button anymore: shoving the joystick past 0.85 forward auto-runs. */
+    #touchControls .fire { right: 24px;  bottom: 24px;  width: 104px; height: 104px; font-size: 38px; background: rgba(220, 60, 60, 0.75); }
     #touchControls .fire:active,
     #touchControls .fire.pressed { background: rgba(255, 130, 60, 0.95); }
-    #touchControls .jump    { right: 140px; bottom: 70px; }
-    #touchControls .reload  { right: 140px; bottom: 150px; font-size: 24px; }
-    #touchControls .grenade { right: 28px; bottom: 140px; font-size: 26px; }
-    #touchControls .sprint  { left: 170px; bottom: 70px; }
+    #touchControls .jump    { right: 150px; bottom: 30px;  width: 88px; height: 88px; font-size: 32px; background: rgba(74, 193, 255, 0.7); }
+    #touchControls .jump:active,
+    #touchControls .jump.pressed { background: rgba(74, 193, 255, 0.95); color: #000; }
+    #touchControls .reload  { right: 30px;  bottom: 150px; width: 64px; height: 64px; font-size: 24px; }
+    #touchControls .grenade { right: 112px; bottom: 170px; width: 64px; height: 64px; font-size: 26px; }
 
     /* Hide redundant on-screen hint about ESC etc when on touch */
     body.is-touch #overlay .pick.solo-hint { display: none; }
@@ -1205,7 +1216,6 @@
     <div class="action-btn jump"    id="touchJump">🦘</div>
     <div class="action-btn reload"  id="touchReload">🔄</div>
     <div class="action-btn grenade" id="touchGrenade">💣</div>
-    <div class="action-btn sprint"  id="touchSprint">⚡</div>
   </div>
 
   <div id="gameOver" class="hidden">
