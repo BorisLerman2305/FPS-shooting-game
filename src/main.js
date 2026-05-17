@@ -3867,9 +3867,31 @@ let viewMode = 'fps';
 let localAvatar = null;
 const THIRD_PERSON_BACK = 4.5;   // metres pulled back along view forward
 const THIRD_PERSON_UP   = 1.2;   // metres pulled up above eye line
+const TP_WALL_MARGIN    = 0.3;   // keep camera this far in front of any wall
 const EYE_HEIGHT        = 1.7;   // matches camera.position.y at rest
 const _tpSavedCamPos = new THREE.Vector3();
 const _tpForward     = new THREE.Vector3();
+const _tpToCam       = new THREE.Vector3();
+const _tpCollisionRay = new THREE.Raycaster();
+
+// ─── Held-weapon prop (third-person only) ───────────────────────────────
+// A tiny box stuck to the local avatar's right hand. Color + size hint at
+// which weapon you're holding without rebuilding the full FPS weapon model
+// (those models include their own hands and are tuned for camera-local
+// space, so reparenting them would look wrong).
+const TP_WEAPON_PROPS = {
+  pistol:       { w: 0.20, h: 0.14, d: 0.32, color: 0x2a2a2a },
+  rifle:        { w: 0.14, h: 0.18, d: 0.85, color: 0x222222 },
+  sniper:       { w: 0.14, h: 0.18, d: 1.10, color: 0x1c1c1c },
+  shotgun:      { w: 0.18, h: 0.20, d: 0.70, color: 0x3a2a18 },
+  flamethrower: { w: 0.20, h: 0.24, d: 0.55, color: 0x8a2a2a },
+  sword:        { w: 0.08, h: 0.04, d: 0.85, color: 0xdddddd },
+  rpg:          { w: 0.22, h: 0.22, d: 1.00, color: 0x3a4a2a },
+  tommyGun:     { w: 0.16, h: 0.18, d: 0.70, color: 0x4a3525 },
+  lightsaber:   { w: 0.08, h: 0.08, d: 1.10, color: 0x66e7ff },
+  crossbow:     { w: 0.30, h: 0.16, d: 0.55, color: 0x6b4226 },
+  minigun:      { w: 0.30, h: 0.30, d: 0.80, color: 0x222222 },
+};
 
 function ensureLocalAvatar() {
   if (localAvatar) return localAvatar;
@@ -3881,8 +3903,43 @@ function ensureLocalAvatar() {
   localAvatar = createRemoteAvatar(profile, '__local__');
   // Hide the floating name label — the player knows who they are
   if (localAvatar.label) localAvatar.label.visible = false;
+  // Weapon-prop slot, placed at the local position of the right hand.
+  // The right arm anchor is at (0.6, 1.0, 0) with height 0.85, so the hand
+  // is at roughly (0.6, 0.58, 0). We park the slot slightly in front so
+  // the weapon sticks out forward like the avatar is aiming.
+  const weaponSlot = new THREE.Group();
+  weaponSlot.position.set(0.6, 0.65, -0.2);
+  localAvatar.group.add(weaponSlot);
+  localAvatar.weaponSlot = weaponSlot;
+  localAvatar.heldWeaponId = null;
   scene.add(localAvatar.group);
+  updateLocalAvatarWeapon();
   return localAvatar;
+}
+
+// Build (or rebuild) the small proxy mesh in the local avatar's hand to
+// reflect whatever the player has equipped right now. Cheap: O(1) mesh.
+function updateLocalAvatarWeapon() {
+  if (!localAvatar || !localAvatar.weaponSlot) return;
+  const id = currentWeaponId;
+  if (localAvatar.heldWeaponId === id) return;
+  // Clear previous prop
+  while (localAvatar.weaponSlot.children.length) {
+    const child = localAvatar.weaponSlot.children[0];
+    localAvatar.weaponSlot.remove(child);
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) child.material.dispose();
+  }
+  const spec = TP_WEAPON_PROPS[id];
+  if (spec) {
+    const mat = new THREE.MeshLambertMaterial({ color: spec.color });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(spec.w, spec.h, spec.d), mat);
+    // Box centered on its origin → shift forward so it sticks OUT of the hand
+    mesh.position.set(0, 0, -spec.d / 2);
+    mesh.castShadow = true;
+    localAvatar.weaponSlot.add(mesh);
+  }
+  localAvatar.heldWeaponId = id;
 }
 
 function setViewMode(mode) {
@@ -4063,13 +4120,33 @@ function animate() {
       camera.position.z
     );
     localAvatar.group.rotation.y = camera.rotation.y;
-    // Offset the camera backward along its forward direction + a bit up.
+    // Make sure the held weapon prop matches the equipped weapon
+    updateLocalAvatarWeapon();
+    // ─── Where do we WANT the camera to be? ───────────────────────────
     camera.getWorldDirection(_tpForward);  // unit vector in world space
     _tpSavedCamPos.copy(camera.position);
-    camera.position.x -= _tpForward.x * THIRD_PERSON_BACK;
-    camera.position.y -= _tpForward.y * THIRD_PERSON_BACK;
-    camera.position.z -= _tpForward.z * THIRD_PERSON_BACK;
-    camera.position.y += THIRD_PERSON_UP;
+    const wantX = camera.position.x - _tpForward.x * THIRD_PERSON_BACK;
+    const wantY = camera.position.y - _tpForward.y * THIRD_PERSON_BACK + THIRD_PERSON_UP;
+    const wantZ = camera.position.z - _tpForward.z * THIRD_PERSON_BACK;
+    // ─── Camera wall collision ────────────────────────────────────────
+    // Raycast from head to wanted position. If a wall is in the way,
+    // pull the camera up SHORT of it so we don't clip through scenery.
+    _tpToCam.set(wantX - camera.position.x, wantY - camera.position.y, wantZ - camera.position.z);
+    const wantedDist = _tpToCam.length();
+    _tpToCam.normalize();
+    _tpCollisionRay.set(camera.position, _tpToCam);
+    _tpCollisionRay.far = wantedDist + TP_WALL_MARGIN;
+    const wallMeshes = colliders.map(c => c.mesh);
+    const hits = _tpCollisionRay.intersectObjects(wallMeshes, false);
+    let finalDist = wantedDist;
+    if (hits.length > 0) {
+      // Stop short of the wall by TP_WALL_MARGIN. Min distance prevents
+      // the camera from sitting INSIDE the avatar if a wall is hugging us.
+      finalDist = Math.max(0.4, hits[0].distance - TP_WALL_MARGIN);
+    }
+    camera.position.x += _tpToCam.x * finalDist;
+    camera.position.y += _tpToCam.y * finalDist;
+    camera.position.z += _tpToCam.z * finalDist;
     _tpActive = true;
   } else if (localAvatar) {
     // Hide the avatar in FPS mode (or while paused / dead)
