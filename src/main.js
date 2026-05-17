@@ -4119,11 +4119,17 @@ function animate() {
       camera.position.y - EYE_HEIGHT,
       camera.position.z
     );
-    localAvatar.group.rotation.y = camera.rotation.y;
-    // Make sure the held weapon prop matches the equipped weapon
-    updateLocalAvatarWeapon();
     // ─── Where do we WANT the camera to be? ───────────────────────────
     camera.getWorldDirection(_tpForward);  // unit vector in world space
+    // Yaw the avatar to match the camera's horizontal facing. We compute
+    // yaw from the world-space forward vector (ignoring its y component)
+    // because camera.rotation.y is NOT a clean yaw when pitch is non-zero
+    // — Three.js applies rotations in XYZ order by default, so the Y
+    // rotation is taken IN the pitched frame and the avatar would lean
+    // when the player looked up or down.
+    localAvatar.group.rotation.y = Math.atan2(-_tpForward.x, -_tpForward.z);
+    // Make sure the held weapon prop matches the equipped weapon
+    updateLocalAvatarWeapon();
     _tpSavedCamPos.copy(camera.position);
     const wantX = camera.position.x - _tpForward.x * THIRD_PERSON_BACK;
     const wantY = camera.position.y - _tpForward.y * THIRD_PERSON_BACK + THIRD_PERSON_UP;
