@@ -2372,7 +2372,9 @@ function setWeapon(id) {
   if (WEAPONS[id] && WEAPONS[id].shopOnly && !playerOwns(id)) return;
   if (id !== currentWeaponId) {
     weapons[currentWeaponId].model.visible = false;
-    weapons[id].model.visible = true;
+    // In 3rd person we never show the camera-attached weapon (it'd float
+    // behind the avatar). setViewMode handles the visibility otherwise.
+    weapons[id].model.visible = (typeof viewMode === 'undefined') ? true : (viewMode === 'fps');
     // cancel reload of the previous weapon
     weapons[currentWeaponId].reloading = false;
   }
@@ -3851,6 +3853,88 @@ function resolveCollisions(prevPos) {
   }
 }
 
+// ─── View mode: FPS (default) ↔ third-person ─────────────────────────────
+// FPS keeps the camera at eye level and renders the weapon. Third-person
+// pulls the camera back along the player's view direction and shows a
+// Steve-style avatar (reusing the remote-player figure) so you can see
+// your own character. Toggled with V or the on-screen 👁️ button.
+//
+// Implementation: game logic (movement, collisions, raycasting, networking)
+// always operates on the camera's "head" position. In each frame, JUST
+// before composer.render(), we save the head position, move the camera
+// back+up, render, and restore. Nothing else needs to know.
+let viewMode = 'fps';
+let localAvatar = null;
+const THIRD_PERSON_BACK = 4.5;   // metres pulled back along view forward
+const THIRD_PERSON_UP   = 1.2;   // metres pulled up above eye line
+const EYE_HEIGHT        = 1.7;   // matches camera.position.y at rest
+const _tpSavedCamPos = new THREE.Vector3();
+const _tpForward     = new THREE.Vector3();
+
+function ensureLocalAvatar() {
+  if (localAvatar) return localAvatar;
+  const profile = {
+    name:  getMyDisplayName(),
+    color: (net.profile && net.profile.color) || '#ffd54a',
+  };
+  // Use a sentinel peerId so this never collides with a real connection
+  localAvatar = createRemoteAvatar(profile, '__local__');
+  // Hide the floating name label — the player knows who they are
+  if (localAvatar.label) localAvatar.label.visible = false;
+  scene.add(localAvatar.group);
+  return localAvatar;
+}
+
+function setViewMode(mode) {
+  if (mode !== 'fps' && mode !== 'third-person') mode = 'fps';
+  viewMode = mode;
+  // The weapon is attached to the camera; in 3rd person it'd float behind
+  // the player's avatar. Hide it for now (a future pass can put it in the
+  // avatar's hand).
+  if (weapons[currentWeaponId]) {
+    weapons[currentWeaponId].model.visible = (mode === 'fps');
+  }
+  if (mode === 'third-person') {
+    ensureLocalAvatar();
+    localAvatar.group.visible = true;
+  } else if (localAvatar) {
+    localAvatar.group.visible = false;
+  }
+  // Reflect on the toggle button
+  const btn = document.getElementById('viewBtn');
+  if (btn) {
+    btn.textContent = (mode === 'third-person') ? '🎥' : '👁️';
+    btn.classList.toggle('tp', mode === 'third-person');
+    btn.title = (mode === 'third-person') ? 'מבט גוף שלישי (V)' : 'מבט גוף ראשון (V)';
+  }
+  try { localStorage.setItem('fps_view_mode', mode); } catch {}
+}
+
+function toggleViewMode() {
+  setViewMode(viewMode === 'fps' ? 'third-person' : 'fps');
+}
+
+// Restore preference on boot — but only AFTER weapons + setWeapon ran above
+try {
+  const saved = localStorage.getItem('fps_view_mode');
+  if (saved === 'third-person') setViewMode('third-person');
+} catch {}
+
+// V key toggles. Don't fire on key-repeat — one tap per toggle.
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyV' && !e.repeat) toggleViewMode();
+});
+
+// On-screen button (touch + click)
+{
+  const btn = document.getElementById('viewBtn');
+  if (btn) {
+    const handler = (e) => { e.stopPropagation(); e.preventDefault(); toggleViewMode(); };
+    btn.addEventListener('click', handler);
+    btn.addEventListener('touchstart', handler, { passive: false });
+  }
+}
+
 // ─── Main loop ────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 
@@ -3963,7 +4047,38 @@ function animate() {
     isMenuOpen(_menuEls.admin);
   document.body.classList.toggle('in-game', !menuOpen);
 
+  // ─── 3rd-person render trick ───────────────────────────────────────────
+  // Game logic above used `camera.position` as the player's HEAD. We now
+  // (optionally) move the camera back+up just for this render so the
+  // player sees their own avatar. After render we restore so next frame's
+  // logic keeps operating on the head position.
+  let _tpActive = false;
+  if (viewMode === 'third-person' && localAvatar && controls.isLocked && game.alive) {
+    localAvatar.group.visible = true;
+    // Place avatar at the player's feet, facing the same way as the camera.
+    // EYE_HEIGHT subtracts so feet land on the ground when standing.
+    localAvatar.group.position.set(
+      camera.position.x,
+      camera.position.y - EYE_HEIGHT,
+      camera.position.z
+    );
+    localAvatar.group.rotation.y = camera.rotation.y;
+    // Offset the camera backward along its forward direction + a bit up.
+    camera.getWorldDirection(_tpForward);  // unit vector in world space
+    _tpSavedCamPos.copy(camera.position);
+    camera.position.x -= _tpForward.x * THIRD_PERSON_BACK;
+    camera.position.y -= _tpForward.y * THIRD_PERSON_BACK;
+    camera.position.z -= _tpForward.z * THIRD_PERSON_BACK;
+    camera.position.y += THIRD_PERSON_UP;
+    _tpActive = true;
+  } else if (localAvatar) {
+    // Hide the avatar in FPS mode (or while paused / dead)
+    localAvatar.group.visible = (viewMode === 'third-person');
+  }
+
   composer.render();
+
+  if (_tpActive) camera.position.copy(_tpSavedCamPos);
 }
 
 animate();
