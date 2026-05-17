@@ -46,6 +46,8 @@ export async function migrate() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS pvp_elo INTEGER NOT NULL DEFAULT 1000`);
   // B2: daily challenges — server stores the rolled set + per-challenge progress
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_challenges JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  // Cosmetic skin — which avatar appearance the player currently wears
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS skin VARCHAR(20) NOT NULL DEFAULT 'classic'`);
   await pool.query(`CREATE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS users_kills_idx     ON users (kills DESC)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS users_victories_idx ON users (victories DESC)`);
@@ -74,6 +76,7 @@ export function publicUser(row) {
     },
     loadout: {
       favoriteWeapon: row.favorite_weapon,
+      skin: row.skin || 'classic',
     },
     ownedItems: row.owned_items || [],
     dailyChallenges: row.daily_challenges || {},
@@ -129,6 +132,10 @@ export async function touchLastLogin(id) {
 
 export async function updateLoadout(id, favoriteWeapon) {
   await pool.query('UPDATE users SET favorite_weapon = $1 WHERE id = $2', [favoriteWeapon, id]);
+}
+
+export async function updateSkin(id, skin) {
+  await pool.query('UPDATE users SET skin = $1 WHERE id = $2', [skin, id]);
 }
 
 export async function bumpStats(id, deltas) {

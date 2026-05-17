@@ -168,6 +168,27 @@ export function setFavoriteWeapon(weaponId) {
     });
 }
 
+// Pick which cosmetic skin the player's avatar wears. Same optimistic-with-
+// rollback pattern as setFavoriteWeapon. Returns a Promise that resolves on
+// success, rejects on server error — callers that need to know whether the
+// save stuck (e.g. to broadcast to peers) can await it.
+export function setActiveSkin(skinId) {
+  if (!cachedUser) return Promise.resolve();
+  cachedUser.loadout = cachedUser.loadout || {};
+  const prev = cachedUser.loadout.skin;
+  cachedUser.loadout.skin = skinId;
+  persistCache();
+  return api('/api/me/loadout', { method: 'PATCH', body: { skin: skinId }, auth: true })
+    .catch((err) => {
+      console.warn('[auth] setActiveSkin failed, rolling back:', err.message);
+      if (cachedUser) {
+        cachedUser.loadout.skin = prev;
+        persistCache();
+      }
+      throw err;
+    });
+}
+
 // ─── Admin ───────────────────────────────────────────────────────────────
 export async function listAllUsers() {
   const data = await api('/api/admin/users', { auth: true });

@@ -88,12 +88,36 @@ export const SHOP_ITEMS = {
     name: 'חידוד החרב', icon: '✨',
     description: 'משדרג את החרב הקיימת: הלהב נצבע זהב והנזק עולה מ-60 ל-90. אותו מקש (5), חרב חזקה יותר.',
   },
+
+  // ─── Cosmetic skins — change how your avatar looks (cosmetic only) ──────
+  // Visible to other players in multiplayer. Doesn't affect any stats.
+  skinNinja: {
+    id: 'skinNinja', kind: 'skin', cost: 80,
+    name: 'נינג\'ה', icon: '🥷',
+    description: 'בגדים שחורים, סרט-ראש, ועיניים אדומות זוהרות. שתיקה קטלנית.',
+  },
+  skinRobot: {
+    id: 'skinRobot', kind: 'skin', cost: 120,
+    name: 'רובוט', icon: '🤖',
+    description: 'גוף מתכת אפור, אנטנה על הראש, ועיניים ציאן זוהרות. ביפ בופ.',
+  },
+  skinAstronaut: {
+    id: 'skinAstronaut', kind: 'skin', cost: 150,
+    name: 'אסטרונאוט', icon: '🚀',
+    description: 'חליפת חלל לבנה עם פסים כתומים וקסדת זכוכית. נכון לחלל החיצון!',
+  },
+  skinWizard: {
+    id: 'skinWizard', kind: 'skin', cost: 200,
+    name: 'קוסם', icon: '🧙',
+    description: 'גלימה סגולה וכובע מחודד עם כוכבים. ירי = קסם.',
+  },
 };
 
 export const SHOP_ORDER = [
   'rpg', 'tommyGun', 'lightsaber', 'crossbow', 'minigun',
   'hpBoost', 'staminaBoost', 'grenadeMax',
   'scopeRifle', 'bigMagRifle', 'bigMagPistol', 'fastReload', 'extraPellets', 'sharpSword',
+  'skinNinja', 'skinRobot', 'skinAstronaut', 'skinWizard',
 ];
 
 export function isOwned(user, itemId) {

@@ -556,6 +556,20 @@
       box-shadow: 0 0 12px rgba(255,213,74,0.5);
     }
 
+    /* Skin picker — same layout as loadout-picks, different highlight color */
+    #overlay .skin-picks {
+      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 460px;
+    }
+    #overlay .skin-picks button {
+      min-width: 80px; padding: 8px 10px; font-size: 13px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    #overlay .skin-picks button .ico { font-size: 22px; }
+    #overlay .skin-picks button.active {
+      background: #66e7ff; color: #001020; border-color: #66e7ff;
+      box-shadow: 0 0 12px rgba(102,231,255,0.5);
+    }
+
     /* C: map / world picker */
     #overlay .map-pick-label { font-size: 16px; opacity: 0.85; margin-top: 12px; }
     #overlay .map-picks {
@@ -1082,6 +1096,16 @@
       <button data-fav="crossbow"   class="shop-fav hidden" data-shop="crossbow"><span class="ico">🏹</span><span>קשת</span></button>
       <button data-fav="minigun"    class="shop-fav hidden" data-shop="minigun"><span class="ico">⚙️</span><span>מיניגן</span></button>
     </div>
+
+    <div class="loadout-label">סקין:</div>
+    <div class="skin-picks" id="skinPicks">
+      <button data-skin="classic" class="active"><span class="ico">👤</span><span>קלאסי</span></button>
+      <button data-skin="skinNinja"     class="skin-locked hidden" data-shop="skinNinja"><span class="ico">🥷</span><span>נינג׳ה</span></button>
+      <button data-skin="skinRobot"     class="skin-locked hidden" data-shop="skinRobot"><span class="ico">🤖</span><span>רובוט</span></button>
+      <button data-skin="skinAstronaut" class="skin-locked hidden" data-shop="skinAstronaut"><span class="ico">🚀</span><span>אסטרונאוט</span></button>
+      <button data-skin="skinWizard"    class="skin-locked hidden" data-shop="skinWizard"><span class="ico">🧙</span><span>קוסם</span></button>
+    </div>
+
     <div class="quota-row">
       <label for="botTarget">מספר בוטים בשלב:</label>
       <input type="number" id="botTarget" min="1" max="200" value="25" />

@@ -3898,6 +3898,7 @@ function ensureLocalAvatar() {
   const profile = {
     name:  getMyDisplayName(),
     color: (net.profile && net.profile.color) || '#ffd54a',
+    skin:  (session.user && session.user.loadout && session.user.loadout.skin) || 'classic',
   };
   // Use a sentinel peerId so this never collides with a real connection
   localAvatar = createRemoteAvatar(profile, '__local__');
@@ -3915,6 +3916,19 @@ function ensureLocalAvatar() {
   scene.add(localAvatar.group);
   updateLocalAvatarWeapon();
   return localAvatar;
+}
+
+// Tear down + recreate the local avatar — used when the skin changes so the
+// new colors / cap take effect immediately. Re-attaches the weapon slot and
+// resets heldWeaponId so the next updateLocalAvatarWeapon() rebuilds the prop.
+function rebuildLocalAvatar() {
+  if (localAvatar) {
+    scene.remove(localAvatar.group);
+    localAvatar = null;
+  }
+  // Only build it back if we're currently in 3rd person — otherwise lazy-
+  // build on the next setViewMode('third-person').
+  if (viewMode === 'third-person') ensureLocalAvatar();
 }
 
 // Build (or rebuild) the small proxy mesh in the local avatar's hand to
@@ -4250,6 +4264,17 @@ function updateOverlayUserUI() {
   const fav = getEffectiveFavorite();
   document.querySelectorAll('#overlay .loadout-picks button[data-fav]').forEach(b => {
     b.classList.toggle('fav', b.dataset.fav === fav);
+  });
+  // Skin picker: show only owned skins, highlight active
+  const activeSkin =
+    (session.user && session.user.loadout && session.user.loadout.skin) ||
+    (session.guestSkin || 'classic');
+  document.querySelectorAll('#overlay #skinPicks button[data-skin]').forEach(b => {
+    const id = b.dataset.skin;
+    if (b.classList.contains('skin-locked')) {
+      b.classList.toggle('hidden', !playerOwns(id));
+    }
+    b.classList.toggle('active', id === activeSkin);
   });
 }
 
@@ -4711,6 +4736,34 @@ document.querySelectorAll('#overlay .loadout-picks button[data-fav]').forEach(bt
   });
 });
 
+// Skin picker — same flow as favorite weapon, plus rebuild the local avatar
+// so the 3rd-person view updates instantly, and re-sync the net profile so
+// peers see the new look.
+document.querySelectorAll('#overlay #skinPicks button[data-skin]').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.skin;
+    if (!SKINS[id]) return;
+    // Block locked skins (the button is also hidden, but defensive)
+    if (id !== 'classic' && !playerOwns(id)) return;
+    if (session.user) {
+      session.user.loadout = session.user.loadout || {};
+      session.user.loadout.skin = id;
+      Auth.setActiveSkin(id);
+    } else {
+      // Guests can pick classic only (other buttons stay hidden for them).
+      session.guestSkin = id;
+    }
+    updateOverlayUserUI();
+    rebuildLocalAvatar();
+    // Re-sync to peers so the new look propagates if we're in a room
+    if (net.isConnected()) {
+      syncProfileToNet();
+      net.broadcast({ type: 'profile-update', profile: net.profile });
+    }
+  });
+});
+
 // Initial screen: if logged in already → straight to main overlay; else auth
 if (session.user) {
   showMainOverlay();
@@ -4776,6 +4829,8 @@ function syncProfileToNet() {
     // B4: PvP-ELO needs the server-side user id so the shooter can call
     // /api/me/pvp-kill with the right target. Guests have no id → null.
     userId: session.user ? session.user.id : null,
+    // Cosmetic skin — other players will see this on our avatar.
+    skin: (session.user && session.user.loadout && session.user.loadout.skin) || 'classic',
   });
 }
 
@@ -4949,13 +5004,113 @@ function createNameLabel(name, color) {
   return sprite;
 }
 
+// ─── Skins ──────────────────────────────────────────────────────────────
+// Cosmetic look-and-feel overrides for the player avatar. Server-side
+// validation lives in server.js; this is just rendering data.
+//   body/accent/head/eye: hex colors (null means "use player color")
+//   eyeGlow: render eyes with a basic material (no shading) so they pop
+//   cap: which head-piece to build (see buildCap below)
+//   capColor: optional override for cap (defaults to body color)
+const SKINS = {
+  classic: {
+    id: 'classic', name: 'קלאסי',
+    body: null, accent: null, head: 0xfff0d8, eye: 0x111111, eyeGlow: false,
+    cap: 'baseball', capColor: null,
+  },
+  skinNinja: {
+    id: 'skinNinja', name: 'נינג\'ה',
+    body: 0x161616, accent: 0x0a0a0a, head: 0x1a1a1a, eye: 0xff4040, eyeGlow: true,
+    cap: 'headband', capColor: 0xb22222,
+  },
+  skinRobot: {
+    id: 'skinRobot', name: 'רובוט',
+    body: 0x8d96a0, accent: 0x586068, head: 0xb0b8c0, eye: 0x44ddff, eyeGlow: true,
+    cap: 'antenna', capColor: 0x445058,
+  },
+  skinAstronaut: {
+    id: 'skinAstronaut', name: 'אסטרונאוט',
+    body: 0xf0f0f0, accent: 0xe07a30, head: 0x88c8e8, eye: 0x111111, eyeGlow: false,
+    cap: 'helmet', capColor: 0xeaeaea,
+  },
+  skinWizard: {
+    id: 'skinWizard', name: 'קוסם',
+    body: 0x6a3a9a, accent: 0x4a2070, head: 0xf2c89a, eye: 0x111111, eyeGlow: false,
+    cap: 'wizardHat', capColor: 0x3a1860,
+  },
+};
+
+function getSkin(id) { return SKINS[id] || SKINS.classic; }
+
+// Build the head-piece for a given cap kind. Returns a Group (so several
+// pieces can come back together for fancier hats). All meshes cast shadows
+// and are positioned in the avatar's local space where head sits at y=2.0.
+function buildCap(kind, color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color });
+  if (kind === 'baseball') {
+    const flat = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 0.95), mat);
+    flat.position.y = 2.5; flat.castShadow = true; g.add(flat);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.06, 0.35),
+      new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(0.7) }));
+    brim.position.set(0, 2.43, -0.55); brim.castShadow = true; g.add(brim);
+  } else if (kind === 'headband') {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.14, 0.95), mat);
+    band.position.y = 2.32; band.castShadow = true; g.add(band);
+    // Two trailing strips so it reads as a ninja headband
+    const tail1 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.05), mat);
+    tail1.position.set( 0.42, 2.20, 0.40); tail1.rotation.y = 0.4; g.add(tail1);
+    const tail2 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.05), mat);
+    tail2.position.set( 0.50, 2.05, 0.50); tail2.rotation.y = 0.4; g.add(tail2);
+  } else if (kind === 'antenna') {
+    const dome = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.40, 0.18, 12), mat);
+    dome.position.y = 2.50; dome.castShadow = true; g.add(dome);
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.45, 8),
+      new THREE.MeshLambertMaterial({ color: 0x222222 }));
+    rod.position.y = 2.82; g.add(rod);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.10, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0x44ddff }));
+    bulb.position.y = 3.10; g.add(bulb);
+  } else if (kind === 'helmet') {
+    // Translucent dome over the head so the face still shows through
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12),
+      new THREE.MeshStandardMaterial({
+        color: color, roughness: 0.05, metalness: 0.4,
+        transparent: true, opacity: 0.32,
+      }));
+    dome.position.y = 2.20; dome.castShadow = false; g.add(dome);
+    // A small antenna on top to read as space gear
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.20, 0.10),
+      new THREE.MeshLambertMaterial({ color: 0xe07a30 }));
+    tip.position.y = 2.80; g.add(tip);
+  } else if (kind === 'wizardHat') {
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.06, 16), mat);
+    brim.position.y = 2.45; brim.castShadow = true; g.add(brim);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.0, 16), mat);
+    cone.position.y = 2.98; cone.castShadow = true; g.add(cone);
+    // Three little gold stars on the cone
+    const starMat = new THREE.MeshBasicMaterial({ color: 0xffd54a });
+    for (let i = 0; i < 3; i++) {
+      const star = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.04), starMat);
+      const ang = (i / 3) * Math.PI * 2;
+      star.position.set(Math.sin(ang) * 0.28, 2.85 + i * 0.20, -Math.cos(ang) * 0.28);
+      g.add(star);
+    }
+  }
+  return g;
+}
+
 function createRemoteAvatar(profile, peerId) {
   const group = new THREE.Group();
-  const baseColor = new THREE.Color(profile.color || '#ffd54a');
-  const accentColor = baseColor.clone().multiplyScalar(0.6);
+  const skin = getSkin(profile.skin || 'classic');
+  // For classic skin, body/accent come from the player's slot color so each
+  // teammate is visually distinct. Custom skins override with their own colors.
+  const playerColor = new THREE.Color(profile.color || '#ffd54a');
+  const baseColor   = skin.body   != null ? new THREE.Color(skin.body)   : playerColor;
+  const accentColor = skin.accent != null ? new THREE.Color(skin.accent) : playerColor.clone().multiplyScalar(0.6);
+  const headColor   = skin.head;
   const bodyMat = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.55 });
   const accentMat = new THREE.MeshStandardMaterial({ color: accentColor, roughness: 0.6 });
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xfff0d8, roughness: 0.6 });
+  const headMat = new THREE.MeshStandardMaterial({ color: headColor, roughness: 0.6 });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.6), bodyMat);
   body.position.y = 1.0; body.castShadow = true;
@@ -4969,11 +5124,13 @@ function createRemoteAvatar(profile, peerId) {
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.8, 0.85), headMat);
   head.position.y = 2.0; head.castShadow = true;
   head.userData.peerId = peerId; head.userData.isHead = true;
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  // Glowy eyes (basic material → ignores lighting) for robot/ninja skins
+  const eyeMat = skin.eyeGlow
+    ? new THREE.MeshBasicMaterial({ color: skin.eye })
+    : new THREE.MeshBasicMaterial({ color: skin.eye });
   const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.04), eyeMat); eyeL.position.set(-0.18, 2.07, -0.43);
   const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.04), eyeMat); eyeR.position.set( 0.18, 2.07, -0.43);
-  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 0.95), bodyMat);
-  cap.position.y = 2.5; cap.castShadow = true;
+  const cap = buildCap(skin.cap, skin.capColor != null ? skin.capColor : baseColor.getHex());
   group.add(body, belt, legL, legR, armL, armR, head, eyeL, eyeR, cap);
 
   const label = createNameLabel(profile.name || 'שחקן', profile.color || '#ffd54a');
@@ -5082,6 +5239,22 @@ net.addEventListener('message', e => {
       refreshPlayerLists();
       break;
     }
+    case 'profile-update': {
+      // A peer changed something on their profile mid-session (e.g. skin).
+      // Update our cached profile + rebuild their avatar so the new look
+      // shows. Host also relays to every other client.
+      net.peerProfiles.set(from, data.profile);
+      removeRemoteAvatar(from);
+      ensureRemoteAvatar(from);
+      refreshPlayerLists();
+      if (net.isHost()) {
+        for (const peerId of net.getPeers()) {
+          if (peerId === from) continue;
+          net.sendTo(peerId, { type: 'profile-relay', peerId: from, profile: data.profile });
+        }
+      }
+      break;
+    }
     case 'start-game': {
       if (net.isClient()) {
         waitingForHostEl.classList.add('hidden');
@@ -5149,10 +5322,16 @@ function tickNetSync(dt) {
   syncAccumulator += dt;
   if (syncAccumulator < SYNC_INTERVAL) return;
   syncAccumulator = 0;
+  // Derive yaw from the world-space forward direction. camera.rotation.y is
+  // NOT a clean yaw with default XYZ Euler order — when the player tilts up
+  // or down their reported yaw drifts, so peers would see their avatar
+  // twist sideways. atan2 of horizontal components is always clean.
+  camera.getWorldDirection(_tpForward);
+  const cleanYaw = Math.atan2(-_tpForward.x, -_tpForward.z);
   const msg = {
     type: 'pos',
     pos: [camera.position.x, camera.position.y, camera.position.z],
-    rotY: camera.rotation.y,
+    rotY: cleanYaw,
     weapon: currentWeaponId,
   };
   if (net.isHost()) net.broadcast(msg);

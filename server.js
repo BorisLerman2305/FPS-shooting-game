@@ -15,7 +15,7 @@ import {
   createUser, touchLastLogin, updateLoadout, bumpStats, buyItem,
   listAllUsers, setUserDisabled, deleteUser, setUserAdmin,
   publicUser, leaderboard, applyPvpKill,
-  setDailyChallenges, getDailyChallenges, adminAddCoins,
+  setDailyChallenges, getDailyChallenges, adminAddCoins, updateSkin,
 } from './db.js';
 
 // ─── Shop catalog (server-authoritative — client cannot fake costs) ──────
@@ -36,7 +36,16 @@ const SHOP_ITEMS = {
   fastReload:    { kind: 'attach', cost: 120 },
   extraPellets:  { kind: 'attach', cost: 80  },
   sharpSword:    { kind: 'attach', cost: 70  },
+  // Cosmetic skins — change the look of the player's avatar only
+  skinNinja:     { kind: 'skin',   cost: 80  },
+  skinRobot:     { kind: 'skin',   cost: 120 },
+  skinAstronaut: { kind: 'skin',   cost: 150 },
+  skinWizard:    { kind: 'skin',   cost: 200 },
 };
+
+// Skin shop IDs → the active 'skin' value stored on the user row. 'classic'
+// is the free default and isn't in SHOP_ITEMS.
+const SKIN_IDS = new Set(['classic', 'skinNinja', 'skinRobot', 'skinAstronaut', 'skinWizard']);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -145,19 +154,36 @@ app.get('/api/auth/me', authMiddleware(true), async (req, res) => {
 
 // ─── User-facing endpoints (logged-in user updates their own data) ──────
 app.patch('/api/me/loadout', authMiddleware(true), async (req, res) => {
-  const fav = (req.body.favoriteWeapon || '').trim();
-  // Base weapons everyone has access to. Shop weapons are allowed only if the
-  // user actually owns them (added to owned_items via /api/me/buy).
-  const baseWeapons = ['pistol', 'rifle', 'sniper', 'shotgun', 'sword', 'flamethrower'];
-  const shopWeapons = ['rpg', 'tommyGun', 'lightsaber', 'crossbow', 'minigun'];
-  const allWeapons  = [...baseWeapons, ...shopWeapons];
-  if (!allWeapons.includes(fav)) {
-    return res.status(400).json({ error: 'נשק לא חוקי' });
+  // Accept ANY combination of { favoriteWeapon?, skin? } in one call.
+  // We validate each field independently and only update what was passed in.
+  let touched = false;
+  if (req.body.favoriteWeapon !== undefined) {
+    const fav = (req.body.favoriteWeapon || '').trim();
+    // Base weapons everyone has access to. Shop weapons require ownership.
+    const baseWeapons = ['pistol', 'rifle', 'sniper', 'shotgun', 'sword', 'flamethrower'];
+    const shopWeapons = ['rpg', 'tommyGun', 'lightsaber', 'crossbow', 'minigun'];
+    if (![...baseWeapons, ...shopWeapons].includes(fav)) {
+      return res.status(400).json({ error: 'נשק לא חוקי' });
+    }
+    if (shopWeapons.includes(fav) && !(req.user.owned_items || []).includes(fav)) {
+      return res.status(403).json({ error: 'הנשק לא ברשותך' });
+    }
+    await updateLoadout(req.user.id, fav);
+    touched = true;
   }
-  if (shopWeapons.includes(fav) && !(req.user.owned_items || []).includes(fav)) {
-    return res.status(403).json({ error: 'הנשק לא ברשותך' });
+  if (req.body.skin !== undefined) {
+    const skin = (req.body.skin || '').trim();
+    if (!SKIN_IDS.has(skin)) {
+      return res.status(400).json({ error: 'סקין לא חוקי' });
+    }
+    // 'classic' is free for everyone; paid skins must be owned
+    if (skin !== 'classic' && !(req.user.owned_items || []).includes(skin)) {
+      return res.status(403).json({ error: 'הסקין לא ברשותך' });
+    }
+    await updateSkin(req.user.id, skin);
+    touched = true;
   }
-  await updateLoadout(req.user.id, fav);
+  if (!touched) return res.status(400).json({ error: 'לא נשלח שינוי' });
   res.json({ ok: true });
 });
 
