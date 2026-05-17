@@ -55,35 +55,38 @@ export const SHOP_ITEMS = {
   },
 
   // ─── Weapon attachments — cheap upgrades that auto-apply each match ─────
+  // These are NOT new weapons — they upgrade the existing weapons you already
+  // own. The shop card prefixes them with "🔧 אביזר לנשק קיים" so the player
+  // knows they won't see a new slot pop up after buying.
   scopeRifle: {
     id: 'scopeRifle', kind: 'attach', cost: 80,
-    name: 'כוונת לרובה סער', icon: '🔭',
-    description: 'מוסיף זום (מקש ימני) לרובה הסער — צליפה מדויקת מרחוק.',
+    name: 'כוונת אופטית — לרובה הסער', icon: '🔭',
+    description: 'מורכבת על רובה הסער הקיים. קליק ימני מפעיל זום לצליפה מרחוק. תראה אותה על הנשק.',
   },
   bigMagRifle: {
     id: 'bigMagRifle', kind: 'attach', cost: 60,
-    name: 'מחסנית גדולה — רובה סער', icon: '📦',
-    description: 'מחסנית רובה הסער עולה מ-30 ל-45 כדורים.',
+    name: 'מחסנית מורחבת — לרובה הסער', icon: '📦',
+    description: 'משדרגת את מחסנית רובה הסער מ-30 ל-45 כדורים. פחות טעינות, יותר ירי רצוף.',
   },
   bigMagPistol: {
     id: 'bigMagPistol', kind: 'attach', cost: 40,
-    name: 'מחסנית גדולה — אקדח', icon: '📦',
-    description: 'מחסנית האקדח עולה מ-12 ל-18 כדורים.',
+    name: 'מחסנית מורחבת — לאקדח', icon: '📦',
+    description: 'משדרגת את מחסנית האקדח מ-12 ל-18 כדורים.',
   },
   fastReload: {
     id: 'fastReload', kind: 'attach', cost: 120,
-    name: 'טעינה מהירה', icon: '⏱️',
-    description: 'כל זמני הטעינה מתקצרים ב-35% — לכל הנשקים.',
+    name: 'אימון טעינה מהירה', icon: '⏱️',
+    description: 'מקצר ב-35% את זמן הטעינה של כל הנשקים שכבר ברשותך.',
   },
   extraPellets: {
     id: 'extraPellets', kind: 'attach', cost: 80,
-    name: 'קליעי-על לרובה ציד', icon: '💥',
-    description: 'רובה ציד יורה 11 כדוריות במקום 8 — פיזור רחב, נזק עצום.',
+    name: 'קליעי-על — לרובה הציד', icon: '💥',
+    description: 'משדרג את כדורי רובה הציד הקיים: 11 כדוריות במקום 8. פיזור רחב, נזק עצום.',
   },
   sharpSword: {
     id: 'sharpSword', kind: 'attach', cost: 70,
-    name: 'חרב מחודדת', icon: '⚔️',
-    description: 'נזק החרב עולה מ-60 ל-90 — הריגה בחתך אחד.',
+    name: 'חידוד החרב', icon: '✨',
+    description: 'משדרג את החרב הקיימת: הלהב נצבע זהב והנזק עולה מ-60 ל-90. אותו מקש (5), חרב חזקה יותר.',
   },
 };
 

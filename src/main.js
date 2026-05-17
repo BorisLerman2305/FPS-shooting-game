@@ -1906,12 +1906,35 @@ function createRifleModel() {
   const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.45), barrelMat); barrel.position.set(0, 0.04, -0.55);
   const mag    = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.12), bodyMat);   mag.position.set(0, -0.13, -0.10);
   const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), muzzleMat());  muzzle.position.set(0, 0.04, -0.78);
+  // ─── Attachment: scope (hidden by default; shown when scopeRifle owned) ─
+  // Built as a sub-group so applyAttachments can flip its visibility per round.
+  const scopeAttach = new THREE.Group();
+  scopeAttach.name = 'scopeAttachment';
+  const scopeBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.035, 0.22, 12),
+    new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.4 })
+  );
+  scopeBody.rotation.x = Math.PI / 2;
+  scopeBody.position.set(0, 0.10, -0.20);
+  const scopeLens = new THREE.Mesh(
+    new THREE.CircleGeometry(0.032, 16),
+    new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.85 })
+  );
+  scopeLens.position.set(0, 0.10, -0.09);
+  scopeLens.rotation.y = Math.PI;
+  // Tiny mount posts holding the scope to the rifle body
+  const mountFront = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.02), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  mountFront.position.set(0, 0.075, -0.25);
+  const mountBack = mountFront.clone();
+  mountBack.position.set(0, 0.075, -0.13);
+  scopeAttach.add(scopeBody, scopeLens, mountFront, mountBack);
+  scopeAttach.visible = false;
   // Two hands: right on the trigger near the stock, left on the foregrip
   const rightHand = createPlayerHand('right');
   rightHand.position.set(0, -0.03, 0.05);
   const leftHand = createPlayerHand('left');
   leftHand.position.set(0, -0.04, -0.40);
-  g.add(stock, body, barrel, mag, muzzle, rightHand, leftHand);
+  g.add(stock, body, barrel, mag, muzzle, scopeAttach, rightHand, leftHand);
   g.position.set(0.28, -0.28, -0.5);
   return { group: g, muzzle };
 }
@@ -2195,10 +2218,21 @@ function createSwordModel() {
   const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.025, 0.7),
     new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.9, roughness: 0.2 }));
   blade.position.set(0, 0, -0.32);
+  blade.name = 'swordBlade';
+  // ─── Attachment: sharpSword glow edge (hidden until owned) ──────────────
+  // A thin glowing cyan edge runs along the top of the blade — clear visual
+  // cue that the sword has been sharpened/enchanted.
+  const edge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.084, 0.005, 0.71),
+    new THREE.MeshBasicMaterial({ color: 0x66e7ff, transparent: true, opacity: 0.9 })
+  );
+  edge.position.set(0, 0.018, -0.32);
+  edge.name = 'sharpSwordEdge';
+  edge.visible = false;
   // Right hand grips the hilt — sword is one-handed
   const rightHand = createPlayerHand('right');
   rightHand.position.set(0, -0.04, 0.18);
-  g.add(hilt, guard, blade, rightHand);
+  g.add(hilt, guard, blade, edge, rightHand);
   g.position.set(0.35, -0.32, -0.5);
   g.rotation.set(0, -0.2, 0); // hangs to the right at a slight angle
   return { group: g, muzzle: null };
@@ -2300,7 +2334,10 @@ function playerOwns(itemId) {
 // Apply weapon attachments to this round's cloned confs.
 // Must run AFTER weapons[id].conf has been reset to a fresh copy of WEAPONS[id]
 // and BEFORE ammo/reserve are filled, so the new caps take effect immediately.
+// Also toggles visibility of the matching 3D attachment meshes (scope on rifle,
+// glow edge + gold tint on sword) so the player can SEE what they own.
 function applyAttachments() {
+  // ─── Stat effects ──────────────────────────────────────────────────────
   if (playerOwns('scopeRifle')   && weapons.rifle)    weapons.rifle.conf.canZoom = true;
   if (playerOwns('bigMagRifle')  && weapons.rifle)    weapons.rifle.conf.maxAmmo = 45;
   if (playerOwns('bigMagPistol') && weapons.pistol)   weapons.pistol.conf.maxAmmo = 18;
@@ -2312,6 +2349,21 @@ function applyAttachments() {
         weapons[id].conf.reloadTime = weapons[id].conf.reloadTime * 0.65;
       }
     }
+  }
+
+  // ─── Visual effects ────────────────────────────────────────────────────
+  // Rifle scope: show the scope sub-group on top of the rifle if owned.
+  if (weapons.rifle) {
+    const scope = weapons.rifle.model.getObjectByName('scopeAttachment');
+    if (scope) scope.visible = playerOwns('scopeRifle');
+  }
+  // Sharp sword: show the glow edge + tint the blade golden when owned.
+  if (weapons.sword) {
+    const edge  = weapons.sword.model.getObjectByName('sharpSwordEdge');
+    const blade = weapons.sword.model.getObjectByName('swordBlade');
+    const sharp = playerOwns('sharpSword');
+    if (edge)  edge.visible = sharp;
+    if (blade) blade.material.color.setHex(sharp ? 0xfff3a8 : 0xdddddd);
   }
 }
 
@@ -4044,7 +4096,7 @@ function renderShop() {
     const card = document.createElement('div');
     card.className = 'shop-card' + (owned ? ' owned' : '') + (tooPoor ? ' too-poor' : '');
     card.innerHTML = `
-      <div class="kind">${item.kind === 'weapon' ? 'נשק' : 'שדרוג'}</div>
+      <div class="kind kind-${item.kind}">${item.kind === 'weapon' ? '🗡️ נשק חדש' : item.kind === 'attach' ? '🔧 אביזר לנשק קיים' : '✨ שדרוג'}</div>
       <div class="icon">${item.icon}</div>
       <div class="name">${item.name}</div>
       <div class="desc">${item.description}</div>
